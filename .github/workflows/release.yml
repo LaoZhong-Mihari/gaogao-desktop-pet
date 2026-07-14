@@ -1,0 +1,210 @@
+name: Release beta
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify tag and application versions
+        shell: bash
+        run: |
+          node scripts/verify-release-tag.mjs "${GITHUB_REF_NAME}"
+
+          package_version="$(node -p "require('./package.json').version")"
+          cargo_version="$(cargo metadata \
+            --manifest-path src-tauri/Cargo.toml \
+            --no-deps \
+            --format-version 1 | jq -r '.packages[] | select(.name == "gaogao-desktop-pet") | .version')"
+
+          if [[ "${cargo_version}" != "${package_version}" ]]; then
+            echo "Cargo version ${cargo_version} does not match package version ${package_version}." >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_NAME}" != "v${package_version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} must exactly match v${package_version}." >&2
+            exit 1
+          fi
+
+      - name: Typecheck and test frontend
+        run: |
+          npx tsc --noEmit
+          npx vitest run --passWithNoTests
+
+      - name: Test Rust backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-features
+
+  create-prerelease:
+    name: Create prerelease
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create GitHub prerelease if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            is_prerelease="$(gh release view "${GITHUB_REF_NAME}" --json isPrerelease --jq '.isPrerelease')"
+            if [[ "${is_prerelease}" != "true" ]]; then
+              echo "Release ${GITHUB_REF_NAME} exists but is not a prerelease." >&2
+              exit 1
+            fi
+            echo "Prerelease ${GITHUB_REF_NAME} already exists; reusing it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --prerelease \
+              --title "糕糕桌宠 ${GITHUB_REF_NAME}" \
+              --notes-file .github/release-notes.md
+          fi
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: create-prerelease
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Universal
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: Windows x64 NSIS
+            os: windows-2022
+            rust_targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Configure macOS ad-hoc signing
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+
+      - name: Build and upload release bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: true
+          uploadUpdaterJson: false
+          retryAttempts: 1
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: gaogao-[platform]-[arch]-[bundle]
+
+      - name: Smoke test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows-installer-smoke.ps1
+
+  checksums:
+    name: Publish SHA-256 checksums
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${GITHUB_REF_NAME}" --dir release-assets --clobber
+
+      - name: Verify required release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_asset() {
+            local pattern="$1"
+            local description="$2"
+            if ! find release-assets -maxdepth 1 -type f -name "${pattern}" -print -quit | grep -q .; then
+              echo "Missing required release asset: ${description} (${pattern})" >&2
+              exit 1
+            fi
+          }
+
+          require_asset '*.dmg' 'macOS Universal DMG'
+          require_asset '*.app.tar.gz' 'macOS Universal app archive'
+          require_asset '*.exe' 'Windows x64 NSIS installer'
+
+      - name: Create checksum manifest
+        run: node scripts/create-checksums.mjs release-assets SHA256SUMS.txt
+
+      - name: Upload checksum to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" SHA256SUMS.txt --clobber
+
+      - name: Upload checksum as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gaogao-sha256
+          path: SHA256SUMS.txt
+          if-no-files-found: error
