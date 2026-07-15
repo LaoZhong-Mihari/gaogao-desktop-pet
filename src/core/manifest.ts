@@ -14,6 +14,7 @@ export const BASE_ANIMATION_IDS = [
   "waiting",
   "running",
   "review",
+  "grooming",
 ] as const;
 
 export type BaseAnimationId = (typeof BASE_ANIMATION_IDS)[number];

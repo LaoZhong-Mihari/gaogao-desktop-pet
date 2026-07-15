@@ -85,7 +85,7 @@ button, input, select { font: inherit; }
   flex: none;
   border: 2px solid #c89a5b;
   border-radius: 14px;
-  background: #fffaf0 url("/assets/spritesheet.webp") no-repeat 0 0 / 464px 691px;
+  background: #fffaf0 url("/assets/spritesheet.webp") no-repeat 0 0 / 464px auto;
 }
 fieldset { margin: 0 0 16px; padding: 14px 16px 16px; border: 1px solid rgba(70,55,42,.18); border-radius: 14px; background: rgba(255,255,242,.78); }
 legend { padding: 0 6px; font-weight: 800; color: #745b3e; }

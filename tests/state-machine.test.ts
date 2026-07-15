@@ -85,10 +85,10 @@ describe("PetStateMachine", () => {
   it("can replace idle behavior while a higher layer remains active", () => {
     const machine = new PetStateMachine();
     machine.setIntent("roam", { kind: "animation", animation: "running-left" });
-    machine.setIdlePose({ kind: "animation", animation: "waiting" });
+    machine.setIdlePose({ kind: "animation", animation: "grooming" });
     expect(machine.current.source).toBe("roam");
     machine.clearIntent("roam");
-    expect(machine.current.pose).toEqual({ kind: "animation", animation: "waiting" });
+    expect(machine.current.pose).toEqual({ kind: "animation", animation: "grooming" });
   });
 
   it("clears every transient timer and rejects use after disposal", () => {

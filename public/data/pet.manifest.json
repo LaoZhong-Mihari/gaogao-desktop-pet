@@ -6,9 +6,9 @@
   "spritesheet": {
     "src": "/assets/spritesheet.webp",
     "width": 1536,
-    "height": 2288,
+    "height": 2496,
     "columns": 8,
-    "rows": 11,
+    "rows": 12,
     "frameWidth": 192,
     "frameHeight": 208
   },
@@ -126,6 +126,18 @@
         { "column": 3, "durationMs": 150 },
         { "column": 4, "durationMs": 150 },
         { "column": 5, "durationMs": 280 }
+      ]
+    },
+    "grooming": {
+      "row": 11,
+      "loop": false,
+      "frames": [
+        { "column": 0, "durationMs": 400 },
+        { "column": 1, "durationMs": 180 },
+        { "column": 2, "durationMs": 180 },
+        { "column": 3, "durationMs": 160 },
+        { "column": 4, "durationMs": 160 },
+        { "column": 5, "durationMs": 320 }
       ]
     }
   },

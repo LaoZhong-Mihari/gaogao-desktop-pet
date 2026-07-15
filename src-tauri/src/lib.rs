@@ -15,6 +15,7 @@ const WINDOW_LABELS: [&str; 3] = [PET_WINDOW, BUBBLE_WINDOW, SETTINGS_WINDOW];
 const MENU_TOGGLE_PET: &str = "toggle-pet";
 const MENU_PAUSE: &str = "pause-resume";
 const MENU_SAY_PHRASE: &str = "say-phrase";
+const MENU_GROOMING: &str = "grooming";
 const MENU_ALWAYS_ON_TOP: &str = "always-on-top";
 const MENU_LAUNCH_AT_LOGIN: &str = "launch-at-login";
 const MENU_SETTINGS: &str = "settings";
@@ -22,6 +23,7 @@ const MENU_QUIT: &str = "quit";
 
 const EVENT_PAUSE_CHANGED: &str = "tray://pause-changed";
 const EVENT_SAY_PHRASE: &str = "tray://say-phrase";
+const EVENT_GROOMING: &str = "tray://grooming";
 const EVENT_ALWAYS_ON_TOP_CHANGED: &str = "tray://always-on-top-changed";
 const EVENT_LAUNCH_AT_LOGIN_CHANGED: &str = "tray://launch-at-login-changed";
 const EVENT_VISIBILITY_CHANGED: &str = "tray://visibility-changed";
@@ -253,6 +255,10 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let _ = set_pet_visible_impl(app, &state, true);
             app.emit(EVENT_SAY_PHRASE, ()).map_err(command_error)
         }
+        MENU_GROOMING => {
+            let _ = set_pet_visible_impl(app, &state, true);
+            app.emit(EVENT_GROOMING, ()).map_err(command_error)
+        }
         MENU_ALWAYS_ON_TOP => {
             let enabled = !state.always_on_top.load(Ordering::Relaxed);
             set_always_on_top_impl(app, &state, enabled).map(|_| ())
@@ -280,6 +286,7 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_toggle_pet = MenuItem::with_id(app, MENU_TOGGLE_PET, "隐藏糕糕", true, None::<&str>)?;
     let tray_pause = MenuItem::with_id(app, MENU_PAUSE, "暂停活动", true, None::<&str>)?;
     let tray_say_phrase = MenuItem::with_id(app, MENU_SAY_PHRASE, "说句话", true, None::<&str>)?;
+    let tray_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
     let tray_always_on_top = CheckMenuItem::with_id(
         app,
         MENU_ALWAYS_ON_TOP,
@@ -303,6 +310,7 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .item(&tray_toggle_pet)
         .item(&tray_pause)
         .item(&tray_say_phrase)
+        .item(&tray_grooming)
         .separator()
         .item(&tray_always_on_top)
         .item(&tray_launch_at_login)
@@ -312,12 +320,14 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .build()?;
 
     let pet_say_phrase = MenuItem::with_id(app, MENU_SAY_PHRASE, "说句话", true, None::<&str>)?;
+    let pet_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
     let pet_pause = MenuItem::with_id(app, MENU_PAUSE, "暂停活动", true, None::<&str>)?;
     let pet_settings = MenuItem::with_id(app, MENU_SETTINGS, "设置…", true, None::<&str>)?;
     let pet_toggle_pet = MenuItem::with_id(app, MENU_TOGGLE_PET, "隐藏糕糕", true, None::<&str>)?;
     let pet_quit = MenuItem::with_id(app, MENU_QUIT, "退出糕糕", true, None::<&str>)?;
     let pet_menu = MenuBuilder::new(app)
         .item(&pet_say_phrase)
+        .item(&pet_grooming)
         .item(&pet_pause)
         .item(&pet_settings)
         .separator()

@@ -1,5 +1,6 @@
 这是糕糕桌宠的未签名 beta 版本。
 
+- 新增“颓废舔毛”动画：会随机出现在待机中，也可以从糕糕右键菜单或托盘菜单直接触发。
 - macOS：下载 Universal `.dmg`（Apple Silicon 与 Intel 通用），或使用 `.app.tar.gz`。
 - Windows：下载 x64 NSIS 安装包 `.exe`。
 - 完整安装与安全提醒请阅读仓库 README。

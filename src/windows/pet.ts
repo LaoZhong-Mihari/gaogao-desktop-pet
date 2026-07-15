@@ -10,6 +10,7 @@ import {
   hitTestAlphaMask,
   loadPetManifest,
   lookDirectionFrameRect,
+  pickAmbientAnimation,
   quantizeScreenDirection,
   stepHorizontalRoam,
   updateSettings,
@@ -312,6 +313,7 @@ class PetController {
     await listen("command://reset-position", () => void this.resetPosition());
     await listen<boolean>("tray://pause-changed", ({ payload }) => this.setPaused(payload));
     await listen("tray://say-phrase", () => void this.sayPhrase());
+    await listen("tray://grooming", () => this.playDirect("grooming"));
     await listen<boolean>("tray://always-on-top-changed", ({ payload }) => {
       if (payload !== this.settings.alwaysOnTop) {
         void this.applySettings(
@@ -497,8 +499,7 @@ class PetController {
     if (this.ambientTimer !== null) window.clearTimeout(this.ambientTimer);
     this.ambientTimer = window.setTimeout(() => {
       if (!this.paused && this.roam === null && this.drag === null) {
-        const choices: BaseAnimationId[] = ["waiting", "review", "running", "failed"];
-        const animation = choices[Math.floor(Math.random() * choices.length)];
+        const animation = pickAmbientAnimation();
         this.stateMachine.setIdlePose({ kind: "animation", animation });
         window.setTimeout(
           () => this.stateMachine.setIdlePose({ kind: "animation", animation: "idle" }),

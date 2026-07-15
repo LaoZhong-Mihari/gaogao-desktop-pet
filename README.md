@@ -45,11 +45,13 @@ Get-FileHash .\*.exe -Algorithm SHA256
 - 拖动糕糕：移动桌宠；拖动时会播放跑动动画。
 - 单击糕糕：挥爪。
 - 双击糕糕：跳跃。
-- 右键糕糕：打开快捷菜单。
+- 右键糕糕：打开快捷菜单，可直接触发“颓废舔毛”。
 - 鼠标靠近：空闲时糕糕会朝 16 个方向看向指针。
-- 放着不管：空闲约 45 秒后，糕糕可能沿当前屏幕底部散步。
+- 放着不管：糕糕会随机发呆、忙碌或颓废舔毛；空闲约 45 秒后也可能沿当前屏幕底部散步。
 
-托盘菜单提供显示/隐藏、暂停/继续、说句话、始终置顶、开机启动、设置和退出。设置页可调整：
+![糕糕颓废舔毛动作](docs/assets/grooming-preview.gif)
+
+托盘菜单提供显示/隐藏、暂停/继续、说句话、颓废舔毛、始终置顶、开机启动、设置和退出。设置页可调整：
 
 - 显示尺寸：75%、100%、125% 或 150%；
 - 始终置顶、看向鼠标、自动漫步和气泡；
@@ -115,11 +117,11 @@ npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
 推送 `v*` 标签会触发 GitHub Actions，在 macOS 与 Windows runner 上构建原生安装包，并创建 prerelease：
 
 ```bash
-git tag v0.1.0-beta.1
-git push origin v0.1.0-beta.1
+git tag v0.1.0-beta.2
+git push origin v0.1.0-beta.2
 ```
 
-发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.1` 对应标签 `v0.1.0-beta.1`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
+发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.2` 对应标签 `v0.1.0-beta.2`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
 
 ## 许可
 

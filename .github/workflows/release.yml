@@ -150,6 +150,7 @@ jobs:
           prerelease: true
           uploadUpdaterJson: false
           retryAttempts: 1
+          releaseAssetNamePattern: Gaogao_[version]_[arch][setup][ext]
           args: ${{ matrix.args }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: gaogao-[platform]-[arch]-[bundle]
