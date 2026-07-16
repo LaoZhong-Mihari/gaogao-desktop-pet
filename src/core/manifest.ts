@@ -1,9 +1,3 @@
-import {
-  DIRECTION_STEPS,
-  type DirectionIndex,
-  type DirectionName,
-} from "./direction";
-
 export const BASE_ANIMATION_IDS = [
   "idle",
   "running-right",
@@ -45,12 +39,6 @@ export interface SpritesheetDefinition {
   readonly frameHeight: number;
 }
 
-export interface LookDirectionDefinition extends AtlasFrameReference {
-  readonly index: DirectionIndex;
-  readonly degrees: number;
-  readonly name: DirectionName;
-}
-
 export interface PetManifest {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -59,7 +47,6 @@ export interface PetManifest {
   readonly spritesheet: SpritesheetDefinition;
   readonly neutralFrame: AtlasFrameReference;
   readonly animations: Readonly<Record<BaseAnimationId, AnimationDefinition>>;
-  readonly lookDirections: readonly LookDirectionDefinition[];
 }
 
 export interface PixelRect {
@@ -221,46 +208,6 @@ function validateAnimations(
   }
 }
 
-function validateLookDirections(
-  value: unknown,
-  sheet: UnknownRecord | null,
-  issues: string[],
-): void {
-  if (!Array.isArray(value) || value.length !== DIRECTION_STEPS.length) {
-    issues.push(`lookDirections must contain exactly ${DIRECTION_STEPS.length} entries`);
-    return;
-  }
-
-  const usedCells = new Set<string>();
-  value.forEach((direction, arrayIndex) => {
-    const path = `lookDirections[${arrayIndex}]`;
-    const expected = DIRECTION_STEPS[arrayIndex];
-    if (!isRecord(direction)) {
-      issues.push(`${path} must be an object`);
-      return;
-    }
-
-    if (direction.index !== expected.index) {
-      issues.push(`${path}.index must be ${expected.index}`);
-    }
-    if (direction.degrees !== expected.degrees) {
-      issues.push(`${path}.degrees must be ${expected.degrees}`);
-    }
-    if (direction.name !== expected.name) {
-      issues.push(`${path}.name must be ${expected.name}`);
-    }
-    validateFrameReference(direction, path, sheet, issues);
-
-    if (isNonNegativeInteger(direction.row) && isNonNegativeInteger(direction.column)) {
-      const cell = `${direction.row}:${direction.column}`;
-      if (usedCells.has(cell)) {
-        issues.push(`${path} reuses atlas cell ${cell}`);
-      }
-      usedCells.add(cell);
-    }
-  });
-}
-
 export function validatePetManifest(value: unknown): readonly string[] {
   const issues: string[] = [];
   if (!isRecord(value)) {
@@ -279,7 +226,6 @@ export function validatePetManifest(value: unknown): readonly string[] {
   const sheet = validateSpritesheet(value.spritesheet, issues);
   validateFrameReference(value.neutralFrame, "neutralFrame", sheet, issues);
   validateAnimations(value.animations, sheet, issues);
-  validateLookDirections(value.lookDirections, sheet, issues);
   return issues;
 }
 
@@ -346,13 +292,6 @@ export function animationFrameRect(
     throw new RangeError(`Frame ${frameIndex} does not exist in ${animationId}`);
   }
   return atlasFrameRect(manifest, { row: animation.row, column: frame.column });
-}
-
-export function lookDirectionFrameRect(
-  manifest: PetManifest,
-  direction: DirectionIndex,
-): PixelRect {
-  return atlasFrameRect(manifest, manifest.lookDirections[direction]);
 }
 
 export function animationDurationMs(

@@ -1,18 +1,12 @@
-import type { DirectionIndex } from "./direction";
 import type { BaseAnimationId } from "./manifest";
 
-export type PetIntentSource = "idle" | "look" | "roam" | "direct";
+export type PetIntentSource = "idle" | "attention" | "roam" | "direct";
 export type TransientIntentSource = Exclude<PetIntentSource, "idle">;
 
-export type PetPose =
-  | {
-      readonly kind: "animation";
-      readonly animation: BaseAnimationId;
-    }
-  | {
-      readonly kind: "look";
-      readonly direction: DirectionIndex;
-    };
+export interface PetPose {
+  readonly kind: "animation";
+  readonly animation: BaseAnimationId;
+}
 
 export interface ActivePetState {
   readonly source: PetIntentSource;
@@ -21,7 +15,7 @@ export interface ActivePetState {
 
 export const PET_STATE_PRIORITY: Readonly<Record<PetIntentSource, number>> = Object.freeze({
   idle: 100,
-  look: 200,
+  attention: 200,
   roam: 300,
   direct: 400,
 });
@@ -50,12 +44,7 @@ const DEFAULT_SCHEDULER: TimerScheduler = {
 const DEFAULT_IDLE_POSE: PetPose = { kind: "animation", animation: "idle" };
 
 function samePose(left: PetPose, right: PetPose): boolean {
-  if (left.kind !== right.kind) {
-    return false;
-  }
-  return left.kind === "look"
-    ? left.direction === (right as Extract<PetPose, { kind: "look" }>).direction
-    : left.animation === (right as Extract<PetPose, { kind: "animation" }>).animation;
+  return left.animation === right.animation;
 }
 
 function sameState(left: ActivePetState, right: ActivePetState): boolean {
@@ -123,7 +112,7 @@ export class PetStateMachine {
 
   resetTransientIntents(): void {
     this.assertUsable();
-    for (const source of ["direct", "roam", "look"] as const) {
+    for (const source of ["direct", "roam", "attention"] as const) {
       const entry = this.intents.get(source);
       if (entry !== undefined) {
         this.clearEntryTimer(entry);

@@ -77,35 +77,35 @@ describe("roaming geometry", () => {
     expect(createRoamPlan(random)).toEqual({ durationMs: 10000, direction: 1 });
   });
 
-  it("moves along the bottom edge and reflects at horizontal bounds", () => {
+  it("moves horizontally at the current height and reflects at bounds", () => {
     const workArea = { x: 0, y: 0, width: 500, height: 400 };
     const windowSize = { width: 100, height: 100 };
     expect(
       stepHorizontalRoam({
-        position: { x: 100, y: 0 },
+        position: { x: 100, y: 80 },
         direction: 1,
         speedPxPerSecond: 50,
         elapsedMs: 1000,
         windowSize,
         workArea,
       }),
-    ).toEqual({ position: { x: 150, y: 300 }, direction: 1, bounced: false });
+    ).toEqual({ position: { x: 150, y: 80 }, direction: 1, bounced: false });
 
     expect(
       stepHorizontalRoam({
-        position: { x: 390, y: 0 },
+        position: { x: 390, y: 80 },
         direction: 1,
         speedPxPerSecond: 20,
         elapsedMs: 1000,
         windowSize,
         workArea,
       }),
-    ).toEqual({ position: { x: 390, y: 300 }, direction: -1, bounced: true });
+    ).toEqual({ position: { x: 390, y: 80 }, direction: -1, bounced: true });
   });
 
   it("handles a large time step without escaping or stalling", () => {
     const result = stepHorizontalRoam({
-      position: { x: 50, y: 0 },
+      position: { x: 50, y: 160 },
       direction: -1,
       speedPxPerSecond: 10_000,
       elapsedMs: 60_000,
@@ -114,6 +114,19 @@ describe("roaming geometry", () => {
     });
     expect(result.position.x).toBeGreaterThanOrEqual(0);
     expect(result.position.x).toBeLessThanOrEqual(400);
-    expect(result.position.y).toBe(300);
+    expect(result.position.y).toBe(160);
+  });
+
+  it("only clamps an invalid height instead of forcing the bottom edge", () => {
+    const result = stepHorizontalRoam({
+      position: { x: -1200, y: -100 },
+      direction: 1,
+      speedPxPerSecond: 0,
+      elapsedMs: 100,
+      windowSize: { width: 200, height: 100 },
+      workArea: displays[0],
+      margin: 10,
+    });
+    expect(result.position).toEqual({ x: -1200, y: 10 });
   });
 });

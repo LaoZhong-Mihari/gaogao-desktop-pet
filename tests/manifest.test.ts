@@ -5,7 +5,6 @@ import {
   animationDurationMs,
   animationFrameRect,
   loadPetManifest,
-  lookDirectionFrameRect,
   ManifestValidationError,
   parsePetManifest,
   parsePetManifestJson,
@@ -17,18 +16,17 @@ function copyManifest(): Record<string, any> {
 }
 
 describe("pet manifest", () => {
-  it("parses the bundled 8x12 atlas definition", () => {
+  it("parses the bundled 8x10 atlas definition", () => {
     const manifest = parsePetManifest(manifestData);
     expect(manifest.spritesheet).toMatchObject({
       width: 1536,
-      height: 2496,
+      height: 2080,
       columns: 8,
-      rows: 12,
+      rows: 10,
       frameWidth: 192,
       frameHeight: 208,
     });
     expect(Object.keys(manifest.animations)).toHaveLength(10);
-    expect(manifest.lookDirections).toHaveLength(16);
     expect(manifest.neutralFrame).toEqual({ row: 0, column: 6 });
   });
 
@@ -44,7 +42,7 @@ describe("pet manifest", () => {
       waiting: [6, 6],
       running: [7, 6],
       review: [8, 6],
-      grooming: [11, 6],
+      grooming: [9, 6],
     } as const;
     for (const [id, [row, frameCount]] of Object.entries(expected)) {
       const animation = manifest.animations[id as keyof typeof expected];
@@ -63,19 +61,13 @@ describe("pet manifest", () => {
       width: 192,
       height: 208,
     });
-    expect(lookDirectionFrameRect(manifest, 15)).toEqual({
-      x: 1344,
-      y: 2080,
-      width: 192,
-      height: 208,
-    });
     expect(animationFrameRect(manifest, "grooming", 5)).toEqual({
       x: 960,
-      y: 2288,
+      y: 1872,
       width: 192,
       height: 208,
     });
-    expect(manifest.animations.grooming.loop).toBe(false);
+    expect(manifest.animations.grooming.loop).toBe(true);
     expect(() => animationFrameRect(manifest, "waving", 99)).toThrow(RangeError);
   });
 
@@ -89,16 +81,15 @@ describe("pet manifest", () => {
     expect(() => parsePetManifest(invalid)).toThrow(ManifestValidationError);
   });
 
-  it("rejects missing animations and invalid direction ordering", () => {
+  it("rejects missing animations and duplicate animation frames", () => {
     const invalid = copyManifest();
     delete invalid.animations.jumping;
-    invalid.lookDirections[1].index = 2;
-    invalid.lookDirections[2].row = invalid.lookDirections[1].row;
-    invalid.lookDirections[2].column = invalid.lookDirections[1].column;
+    invalid.animations.waving.frames[1].column = 0;
     const issues = validatePetManifest(invalid);
     expect(issues).toContain("animations.jumping must be an object");
-    expect(issues).toContain("lookDirections[1].index must be 1");
-    expect(issues.some((issue) => issue.includes("reuses atlas cell"))).toBe(true);
+    expect(issues).toContain(
+      "animations.waving.frames[1].column is duplicated within the animation",
+    );
   });
 
   it("wraps malformed JSON in a manifest validation error", () => {

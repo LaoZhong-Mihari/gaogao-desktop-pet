@@ -27,15 +27,15 @@ class ControllableScheduler implements TimerScheduler {
 }
 
 describe("PetStateMachine", () => {
-  it("enforces direct > roam > look > idle priority", () => {
+  it("enforces direct > roam > attention > idle priority", () => {
     const machine = new PetStateMachine();
     expect(machine.current).toEqual({
       source: "idle",
       pose: { kind: "animation", animation: "idle" },
     });
 
-    machine.setIntent("look", { kind: "look", direction: 4 });
-    expect(machine.current.source).toBe("look");
+    machine.setIntent("attention", { kind: "animation", animation: "review" });
+    expect(machine.current.source).toBe("attention");
     machine.setIntent("roam", { kind: "animation", animation: "running-right" });
     expect(machine.current.source).toBe("roam");
     machine.setIntent("direct", { kind: "animation", animation: "waving" });
@@ -44,8 +44,8 @@ describe("PetStateMachine", () => {
     machine.clearIntent("direct");
     expect(machine.current.source).toBe("roam");
     machine.clearIntent("roam");
-    expect(machine.current.source).toBe("look");
-    machine.clearIntent("look");
+    expect(machine.current.source).toBe("attention");
+    machine.clearIntent("attention");
     expect(machine.current.source).toBe("idle");
   });
 
@@ -53,14 +53,14 @@ describe("PetStateMachine", () => {
     const scheduler = new ControllableScheduler();
     const listener = vi.fn();
     const machine = new PetStateMachine({ scheduler, onChange: listener });
-    machine.setIntent("look", { kind: "look", direction: 12 });
+    machine.setIntent("attention", { kind: "animation", animation: "review" });
     machine.setIntent("direct", { kind: "animation", animation: "waving" }, 700);
     expect(machine.current.source).toBe("direct");
 
     scheduler.fire(1);
     expect(machine.current).toEqual({
-      source: "look",
-      pose: { kind: "look", direction: 12 },
+      source: "attention",
+      pose: { kind: "animation", animation: "review" },
     });
     expect(listener).toHaveBeenCalledTimes(3);
   });
@@ -94,7 +94,7 @@ describe("PetStateMachine", () => {
   it("clears every transient timer and rejects use after disposal", () => {
     const scheduler = new ControllableScheduler();
     const machine = new PetStateMachine({ scheduler });
-    machine.setIntent("look", { kind: "look", direction: 0 }, 100);
+    machine.setIntent("attention", { kind: "animation", animation: "review" }, 100);
     machine.setIntent("roam", { kind: "animation", animation: "running-right" }, 200);
     machine.resetTransientIntents();
     expect(machine.current.source).toBe("idle");

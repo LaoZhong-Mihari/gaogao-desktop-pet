@@ -1,17 +1,17 @@
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  DEFAULT_PHRASES,
   PetStateMachine,
-  animationDurationMs,
+  OCCASIONAL_ATTENTION_DURATION_MS,
+  actionHoldDurationMs,
   animationFrameRect,
   createRoamPlan,
   extractAlphaMask,
   groundedWindowPosition,
   hitTestAlphaMask,
   loadPetManifest,
-  lookDirectionFrameRect,
+  nextOccasionalAttentionDelayMs,
   pickAmbientAnimation,
-  quantizeScreenDirection,
   stepHorizontalRoam,
   updateSettings,
   type ActivePetState,
@@ -22,22 +22,26 @@ import {
   type PetSettings,
   type PixelRect,
 } from "../core";
+import {
+  bottomCenterAnchoredPosition,
+  effectivePetScale,
+  nextGrowthBonus,
+  singleDroppedPath,
+} from "../core/feeding";
 import { loadSettings, saveSettings } from "../app/store";
 import {
   getCursorPosition,
   getWindowGeometry,
-  hideBubble,
   moveWindow,
-  placeBubble,
   resizeWindow,
   runtimeAvailable,
   setAlwaysOnTop,
   setIgnoreCursorEvents,
   setLaunchAtLogin,
   setPetVisible,
-  showBubble,
   showPetMenu,
   showSettings,
+  validateFoodToken,
   type WindowGeometry,
 } from "../app/native";
 
@@ -45,7 +49,6 @@ const FRAME_WIDTH = 192;
 const FRAME_HEIGHT = 208;
 const DRAG_THRESHOLD_PX = 5;
 const DOUBLE_CLICK_MS = 260;
-const LOOK_POLL_MS = 110;
 const HIT_TEST_MS = 45;
 const ROAM_IDLE_MS = 45_000;
 const ROAM_TICK_MS = 50;
@@ -104,11 +107,13 @@ class PetController {
   private animationTimer: number | null = null;
   private animationRevision = 0;
   private ambientTimer: number | null = null;
-  private bubbleTimer: number | null = null;
+  private occasionalAttentionTimer: number | null = null;
   private clickTimer: number | null = null;
   private drag: DragState | null = null;
   private roam: RoamState | null = null;
   private paused = false;
+  private fileDragActive = false;
+  private foodDropPending = false;
   private lastInteraction = Date.now();
   private lastIgnoreCursor: boolean | null = null;
 
@@ -136,14 +141,14 @@ class PetController {
   async start(): Promise<void> {
     this.wirePointerEvents();
     await this.wireApplicationEvents();
+    await this.wireFileDragEvents();
     await this.applySettings(this.settings, true);
     await this.restorePosition();
     this.renderState(this.stateMachine.current);
-    this.startLookPolling();
     this.startHitTesting();
     this.startRoamWatcher();
     this.scheduleAmbient();
-    this.scheduleBubble(2_400);
+    this.scheduleOccasionalAttention();
     await setPetVisible(true);
   }
 
@@ -169,10 +174,6 @@ class PetController {
     this.animationRevision += 1;
     if (this.animationTimer !== null) window.clearTimeout(this.animationTimer);
     this.animationTimer = null;
-    if (state.pose.kind === "look") {
-      this.drawFrame(lookDirectionFrameRect(this.manifest, state.pose.direction));
-      return;
-    }
     this.playAnimation(state.pose.animation, this.animationRevision);
   }
 
@@ -195,10 +196,11 @@ class PetController {
     if (this.paused) return;
     this.noteInteraction();
     this.stopRoaming();
+    this.stateMachine.clearIntent("attention");
     this.stateMachine.setIntent(
       "direct",
       { kind: "animation", animation },
-      animationDurationMs(this.manifest, animation),
+      actionHoldDurationMs(this.manifest, animation),
     );
   }
 
@@ -229,7 +231,8 @@ class PetController {
     event.preventDefault();
     this.noteInteraction();
     this.stopRoaming();
-    await setIgnoreCursorEvents("pet", false);
+    this.stateMachine.clearIntent("attention");
+    await this.setCursorPassthrough(false);
     const [cursor, geometry] = await Promise.all([
       getCursorPosition(),
       getWindowGeometry("pet"),
@@ -264,7 +267,6 @@ class PetController {
       animation: horizontal < 0 ? "running-left" : "running-right",
     });
     await moveWindow("pet", drag.startWindowX + dx, drag.startWindowY + dy);
-    await hideBubble();
   }
 
   private async pointerUp(event: PointerEvent): Promise<void> {
@@ -309,10 +311,8 @@ class PetController {
     await listen<PetSettings>("settings://changed", ({ payload }) => {
       void this.applySettings(updateSettings(this.settings, { ...payload }), false, false);
     });
-    await listen("command://say-phrase", () => void this.sayPhrase());
     await listen("command://reset-position", () => void this.resetPosition());
     await listen<boolean>("tray://pause-changed", ({ payload }) => this.setPaused(payload));
-    await listen("tray://say-phrase", () => void this.sayPhrase());
     await listen("tray://grooming", () => this.playDirect("grooming"));
     await listen<boolean>("tray://always-on-top-changed", ({ payload }) => {
       if (payload !== this.settings.alwaysOnTop) {
@@ -339,7 +339,11 @@ class PetController {
     initial = false,
     syncNative = true,
   ): Promise<void> {
-    const previousScale = this.settings.scale;
+    const previousScale = effectivePetScale(
+      this.settings.scale,
+      this.settings.growthBonus,
+    );
+    const nextScale = effectivePetScale(next.scale, next.growthBonus);
     this.settings = next;
     const writes: Promise<unknown>[] = [saveSettings(next)];
     if (syncNative) {
@@ -349,18 +353,36 @@ class PetController {
       );
     }
     await Promise.all(writes);
-    if (initial || previousScale !== next.scale) {
+    if (initial || previousScale !== nextScale) {
       const geometry = await getWindowGeometry("pet");
+      const nextSize = {
+        width: FRAME_WIDTH * nextScale * geometry.scaleFactor,
+        height: FRAME_HEIGHT * nextScale * geometry.scaleFactor,
+      };
+      const anchored = bottomCenterAnchoredPosition(geometry, nextSize);
       await resizeWindow(
         "pet",
-        FRAME_WIDTH * next.scale * geometry.scaleFactor,
-        FRAME_HEIGHT * next.scale * geometry.scaleFactor,
+        nextSize.width,
+        nextSize.height,
       );
+      if (!initial) {
+        await moveWindow("pet", anchored.x, anchored.y);
+      }
       await this.ensureVisibleAtBottom(false);
+      if (!initial) {
+        const placed = await getWindowGeometry("pet");
+        this.settings = updateSettings(this.settings, {
+          windowPosition: {
+            x: placed.x,
+            y: placed.y,
+            monitorId: placed.monitorName ?? undefined,
+          },
+        });
+        await saveSettings(this.settings);
+      }
     }
-    if (!next.followCursor) this.stateMachine.clearIntent("look");
+    if (!next.attentionEnabled) this.stateMachine.clearIntent("attention");
     if (!next.autoRoam) this.stopRoaming();
-    if (!next.bubblesEnabled) await hideBubble();
   }
 
   private setPaused(paused: boolean): void {
@@ -372,31 +394,93 @@ class PetController {
       this.stateMachine.setIdlePose({ kind: "animation", animation: "idle" });
       this.animationRevision += 1;
       if (this.animationTimer !== null) window.clearTimeout(this.animationTimer);
-      void hideBubble();
     } else {
       this.renderState(this.stateMachine.current);
       this.noteInteraction();
     }
   }
 
-  private startLookPolling(): void {
-    window.setInterval(() => {
-      if (this.paused || !this.settings.followCursor) {
-        this.stateMachine.clearIntent("look");
+  private scheduleOccasionalAttention(): void {
+    if (this.occasionalAttentionTimer !== null) {
+      window.clearTimeout(this.occasionalAttentionTimer);
+    }
+    this.occasionalAttentionTimer = window.setTimeout(() => {
+      this.occasionalAttentionTimer = null;
+      this.runOccasionalAttention();
+      this.scheduleOccasionalAttention();
+    }, nextOccasionalAttentionDelayMs());
+  }
+
+  private runOccasionalAttention(): void {
+    if (
+      this.paused ||
+      !this.settings.attentionEnabled ||
+      this.roam !== null ||
+      this.drag !== null ||
+      this.fileDragActive ||
+      this.stateMachine.current.source !== "idle"
+    ) {
+      return;
+    }
+    this.stateMachine.setIntent(
+      "attention",
+      { kind: "animation", animation: "review" },
+      OCCASIONAL_ATTENTION_DURATION_MS,
+    );
+  }
+
+  private async wireFileDragEvents(): Promise<void> {
+    if (!runtimeAvailable()) return;
+    await getCurrentWindow().onDragDropEvent(({ payload }) => {
+      if (payload.type === "enter") {
+        this.fileDragActive = true;
+        this.stopRoaming();
+        void this.setCursorPassthrough(false);
+        this.noticeDraggedFile();
         return;
       }
-      void Promise.all([getCursorPosition(), getWindowGeometry("pet")]).then(
-        ([cursor, geometry]) => {
-          const direction = quantizeScreenDirection(
-            cursor.x - (geometry.x + geometry.width / 2),
-            cursor.y - (geometry.y + geometry.height / 2),
-            24 * geometry.scaleFactor,
-          );
-          if (direction === null) this.stateMachine.clearIntent("look");
-          else this.stateMachine.setIntent("look", { kind: "look", direction });
-        },
-      );
-    }, LOOK_POLL_MS);
+      if (payload.type === "over") {
+        this.fileDragActive = true;
+        this.noticeDraggedFile();
+        return;
+      }
+      if (payload.type === "drop") {
+        this.fileDragActive = false;
+        this.stateMachine.clearIntent("attention");
+        void this.handleFileDrop(payload.paths);
+        return;
+      }
+      this.fileDragActive = false;
+      this.stateMachine.clearIntent("attention");
+    });
+  }
+
+  private noticeDraggedFile(): void {
+    if (this.paused || !this.settings.attentionEnabled) return;
+    this.stateMachine.setIntent("attention", {
+      kind: "animation",
+      animation: "review",
+    });
+  }
+
+  private async handleFileDrop(paths: readonly string[]): Promise<void> {
+    const path = singleDroppedPath(paths);
+    if (this.paused || this.foodDropPending || path === null) return;
+    this.foodDropPending = true;
+    try {
+      if (!(await validateFoodToken(path))) return;
+      this.noteInteraction();
+      this.stopRoaming();
+      const next = updateSettings(this.settings, {
+        growthBonus: nextGrowthBonus(this.settings.growthBonus),
+      });
+      await this.applySettings(next, false, false);
+      if (runtimeAvailable()) {
+        await emitTo("settings", "pet://settings-changed", this.settings);
+      }
+    } finally {
+      this.foodDropPending = false;
+    }
   }
 
   private startHitTesting(): void {
@@ -406,7 +490,7 @@ class PetController {
   }
 
   private async updateHitTest(): Promise<void> {
-    if (this.drag !== null) return;
+    if (this.drag !== null || this.fileDragActive) return;
     const [cursor, geometry] = await Promise.all([
       getCursorPosition(),
       getWindowGeometry("pet"),
@@ -418,9 +502,13 @@ class PetController {
     );
     const ignore = !overOpaquePixel;
     if (ignore !== this.lastIgnoreCursor) {
-      this.lastIgnoreCursor = ignore;
-      await setIgnoreCursorEvents("pet", ignore);
+      await this.setCursorPassthrough(ignore);
     }
+  }
+
+  private async setCursorPassthrough(ignore: boolean): Promise<void> {
+    this.lastIgnoreCursor = ignore;
+    await setIgnoreCursorEvents("pet", ignore);
   }
 
   private startRoamWatcher(): void {
@@ -430,6 +518,7 @@ class PetController {
         this.settings.autoRoam &&
         this.roam === null &&
         this.drag === null &&
+        !this.fileDragActive &&
         Date.now() - this.lastInteraction >= ROAM_IDLE_MS
       ) {
         void this.startRoaming();
@@ -441,7 +530,6 @@ class PetController {
     if (this.roam !== null) return;
     const plan = createRoamPlan();
     const now = performance.now();
-    await hideBubble();
     this.stateMachine.setIntent("roam", {
       kind: "animation",
       animation: plan.direction === 1 ? "running-right" : "running-left",
@@ -498,47 +586,22 @@ class PetController {
   private scheduleAmbient(): void {
     if (this.ambientTimer !== null) window.clearTimeout(this.ambientTimer);
     this.ambientTimer = window.setTimeout(() => {
-      if (!this.paused && this.roam === null && this.drag === null) {
+      if (
+        !this.paused &&
+        this.roam === null &&
+        this.drag === null &&
+        !this.fileDragActive &&
+        this.stateMachine.current.source === "idle"
+      ) {
         const animation = pickAmbientAnimation();
         this.stateMachine.setIdlePose({ kind: "animation", animation });
         window.setTimeout(
           () => this.stateMachine.setIdlePose({ kind: "animation", animation: "idle" }),
-          animationDurationMs(this.manifest, animation),
+          actionHoldDurationMs(this.manifest, animation),
         );
       }
       this.scheduleAmbient();
     }, randomBetween(8_000, 16_000));
-  }
-
-  private scheduleBubble(delay = randomBetween(120_000, 300_000)): void {
-    if (this.bubbleTimer !== null) window.clearTimeout(this.bubbleTimer);
-    this.bubbleTimer = window.setTimeout(() => {
-      void this.sayPhrase();
-      this.scheduleBubble();
-    }, delay);
-  }
-
-  private async sayPhrase(): Promise<void> {
-    if (!runtimeAvailable() || this.paused || !this.settings.bubblesEnabled) return;
-    const phrases = this.settings.customPhrases.length
-      ? this.settings.customPhrases
-      : DEFAULT_PHRASES;
-    const phrase = phrases[Math.floor(Math.random() * phrases.length)];
-    const geometry = await getWindowGeometry("pet");
-    const area = workArea(geometry);
-    const bubbleWidth = Math.round(280 * geometry.scaleFactor);
-    const bubbleHeight = Math.round(104 * geometry.scaleFactor);
-    const x = Math.min(
-      area.x + area.width - bubbleWidth,
-      Math.max(area.x, geometry.x + geometry.width / 2 - bubbleWidth / 2),
-    );
-    const above = geometry.y - bubbleHeight + 18 * geometry.scaleFactor;
-    const y = above >= area.y
-      ? above
-      : Math.min(area.y + area.height - bubbleHeight, geometry.y + geometry.height - 10);
-    await placeBubble(x, y, bubbleWidth, bubbleHeight);
-    await emitTo("bubble", "bubble://show", { phrase, durationMs: 4_500 });
-    await showBubble();
   }
 
   private async restorePosition(): Promise<void> {

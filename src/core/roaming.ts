@@ -191,7 +191,7 @@ export function createRoamPlan(random: () => number = Math.random): RoamPlan {
   };
 }
 
-/** Advances bottom-edge roaming and reflects cleanly when a display edge is hit. */
+/** Advances horizontal roaming in place and reflects cleanly at display edges. */
 export function stepHorizontalRoam(options: {
   readonly position: Point;
   readonly direction: HorizontalDirection;
@@ -206,6 +206,7 @@ export function stepHorizontalRoam(options: {
   requireNonNegative(options.speedPxPerSecond, "speedPxPerSecond");
   requireNonNegative(options.elapsedMs, "elapsedMs");
   requireFinite(options.position.x, "position.x");
+  requireFinite(options.position.y, "position.y");
 
   const bounds = axisBounds(
     options.workArea.x,
@@ -213,13 +214,20 @@ export function stepHorizontalRoam(options: {
     options.windowSize.width,
     margin,
   );
-  let x = clamp(options.position.x, bounds.minimum, bounds.maximum);
+  const clamped = clampWindowPosition(
+    options.position,
+    options.windowSize,
+    options.workArea,
+    margin,
+  );
+  let x = clamped.x;
+  const y = clamped.y;
   let direction = options.direction;
   const range = bounds.maximum - bounds.minimum;
   const fullDistance = (options.speedPxPerSecond * options.elapsedMs) / 1_000;
   if (range === 0 || fullDistance === 0) {
     return {
-      position: groundedWindowPosition(x, options.windowSize, options.workArea, margin),
+      position: { x, y },
       direction,
       bounced: false,
     };
@@ -247,7 +255,7 @@ export function stepHorizontalRoam(options: {
   }
 
   return {
-    position: groundedWindowPosition(x, options.windowSize, options.workArea, margin),
+    position: { x, y },
     direction,
     bounced,
   };

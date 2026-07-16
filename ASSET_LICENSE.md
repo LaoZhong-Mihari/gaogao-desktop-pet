@@ -5,6 +5,7 @@
 本文件适用于本仓库中的糕糕角色设计与视觉素材，包括但不限于：
 
 - `public/assets/spritesheet.webp` 及其他精灵图；
+- `public/assets/food-token.png` 猫条图标；
 - `src-tauri/app-icon*` 与 `src-tauri/icons/**`；
 - 糕糕的名称、形象、动画帧；
 - 由上述内容生成或截取的预览图、截图和衍生视觉作品。

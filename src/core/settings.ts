@@ -1,20 +1,7 @@
 export const PET_SCALES = [0.75, 1, 1.25, 1.5] as const;
 export type PetScale = (typeof PET_SCALES)[number];
 
-export const DEFAULT_PHRASES = [
-  "今天也先这样吧。",
-  "我只是趴一会儿。",
-  "事情会自己做完吗？",
-  "再看五分钟。",
-  "你忙你的。",
-  "糕糕正在认真发呆。",
-  "这不是偷懒，是节能。",
-  "风从屏幕那边吹来了。",
-  "好像该吃点什么。",
-  "我有在听。大概。",
-  "先趴下，再想办法。",
-  "今天的进度：活着。",
-] as const;
+export const MAX_GROWTH_BONUS = 0.5;
 
 export interface SavedWindowPosition {
   readonly x: number;
@@ -24,28 +11,24 @@ export interface SavedWindowPosition {
 
 export interface PetSettings {
   readonly scale: PetScale;
+  readonly growthBonus: number;
   readonly alwaysOnTop: boolean;
-  readonly followCursor: boolean;
+  readonly attentionEnabled: boolean;
   readonly autoRoam: boolean;
-  readonly bubblesEnabled: boolean;
   readonly launchAtLogin: boolean;
-  readonly customPhrases: readonly string[];
   readonly windowPosition: SavedWindowPosition | null;
 }
 
 export const DEFAULT_SETTINGS: PetSettings = Object.freeze({
   scale: 1,
+  growthBonus: 0,
   alwaysOnTop: true,
-  followCursor: true,
+  attentionEnabled: true,
   autoRoam: true,
-  bubblesEnabled: true,
   launchAtLogin: false,
-  customPhrases: Object.freeze([...DEFAULT_PHRASES]),
   windowPosition: null,
 });
 
-const MAX_PHRASES = 100;
-const MAX_PHRASE_LENGTH = 80;
 const MAX_MONITOR_ID_LENGTH = 128;
 
 type UnknownRecord = Record<string, unknown>;
@@ -62,28 +45,11 @@ function normalizeScale(value: unknown): PetScale {
   return PET_SCALES.includes(value as PetScale) ? (value as PetScale) : DEFAULT_SETTINGS.scale;
 }
 
-export function normalizePhrases(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) {
-    return [...DEFAULT_PHRASES];
+export function normalizeGrowthBonus(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.growthBonus;
   }
-
-  const phrases: string[] = [];
-  const seen = new Set<string>();
-  for (const item of value) {
-    if (typeof item !== "string") {
-      continue;
-    }
-    const phrase = item.trim().slice(0, MAX_PHRASE_LENGTH);
-    if (phrase === "" || seen.has(phrase)) {
-      continue;
-    }
-    seen.add(phrase);
-    phrases.push(phrase);
-    if (phrases.length === MAX_PHRASES) {
-      break;
-    }
-  }
-  return phrases;
+  return Math.min(MAX_GROWTH_BONUS, Math.max(0, value));
 }
 
 export function normalizeWindowPosition(value: unknown): SavedWindowPosition | null {
@@ -106,17 +72,21 @@ export function normalizeWindowPosition(value: unknown): SavedWindowPosition | n
 
 export function normalizeSettings(value: unknown): PetSettings {
   const source = isRecord(value) ? value : {};
+  const legacyAttentionEnabled = normalizeBoolean(
+    source.lookEnabled,
+    DEFAULT_SETTINGS.attentionEnabled,
+  );
   return {
     scale: normalizeScale(source.scale),
+    growthBonus: normalizeGrowthBonus(source.growthBonus),
     alwaysOnTop: normalizeBoolean(source.alwaysOnTop, DEFAULT_SETTINGS.alwaysOnTop),
-    followCursor: normalizeBoolean(source.followCursor, DEFAULT_SETTINGS.followCursor),
-    autoRoam: normalizeBoolean(source.autoRoam, DEFAULT_SETTINGS.autoRoam),
-    bubblesEnabled: normalizeBoolean(
-      source.bubblesEnabled,
-      DEFAULT_SETTINGS.bubblesEnabled,
+    // Preserve the beta.4 preference while retiring its generated direction art.
+    attentionEnabled: normalizeBoolean(
+      source.attentionEnabled,
+      legacyAttentionEnabled,
     ),
+    autoRoam: normalizeBoolean(source.autoRoam, DEFAULT_SETTINGS.autoRoam),
     launchAtLogin: normalizeBoolean(source.launchAtLogin, DEFAULT_SETTINGS.launchAtLogin),
-    customPhrases: normalizePhrases(source.customPhrases),
     windowPosition: normalizeWindowPosition(source.windowPosition),
   };
 }
@@ -127,8 +97,4 @@ export function updateSettings(
   patch: Readonly<Record<string, unknown>>,
 ): PetSettings {
   return normalizeSettings({ ...current, ...patch });
-}
-
-export function resetPhrases(settings: PetSettings): PetSettings {
-  return { ...settings, customPhrases: [...DEFAULT_PHRASES] };
 }

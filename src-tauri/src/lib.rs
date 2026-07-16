@@ -1,5 +1,10 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
@@ -8,21 +13,23 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const PET_WINDOW: &str = "pet";
-const BUBBLE_WINDOW: &str = "bubble";
 const SETTINGS_WINDOW: &str = "settings";
-const WINDOW_LABELS: [&str; 3] = [PET_WINDOW, BUBBLE_WINDOW, SETTINGS_WINDOW];
+const WINDOW_LABELS: [&str; 2] = [PET_WINDOW, SETTINGS_WINDOW];
+
+const FOOD_TOKEN_FILENAME: &str = "糕糕的猫条（拖给糕糕）.png";
+const FOOD_TOKEN_MARKER_FILENAME: &str = "food-token-created-v1";
+const FOOD_TOKEN_BYTES: &[u8] = include_bytes!("../../public/assets/food-token.png");
 
 const MENU_TOGGLE_PET: &str = "toggle-pet";
 const MENU_PAUSE: &str = "pause-resume";
-const MENU_SAY_PHRASE: &str = "say-phrase";
 const MENU_GROOMING: &str = "grooming";
+const MENU_FOOD_TOKEN: &str = "food-token";
 const MENU_ALWAYS_ON_TOP: &str = "always-on-top";
 const MENU_LAUNCH_AT_LOGIN: &str = "launch-at-login";
 const MENU_SETTINGS: &str = "settings";
 const MENU_QUIT: &str = "quit";
 
 const EVENT_PAUSE_CHANGED: &str = "tray://pause-changed";
-const EVENT_SAY_PHRASE: &str = "tray://say-phrase";
 const EVENT_GROOMING: &str = "tray://grooming";
 const EVENT_ALWAYS_ON_TOP_CHANGED: &str = "tray://always-on-top-changed";
 const EVENT_LAUNCH_AT_LOGIN_CHANGED: &str = "tray://launch-at-login-changed";
@@ -75,6 +82,78 @@ struct WindowGeometry {
 
 fn command_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn validate_food_token_path(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() != FOOD_TOKEN_BYTES.len() as u64 {
+        return false;
+    }
+
+    fs::read(path)
+        .map(|bytes| bytes.as_slice() == FOOD_TOKEN_BYTES)
+        .unwrap_or(false)
+}
+
+fn record_food_token_creation(marker: &Path) -> Result<(), String> {
+    let parent = marker
+        .parent()
+        .ok_or_else(|| "food-token marker has no parent directory".to_owned())?;
+    fs::create_dir_all(parent).map_err(command_error)?;
+    fs::write(marker, b"created\n").map_err(command_error)
+}
+
+fn write_food_token(target: &Path) -> Result<(), String> {
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(target) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            if validate_food_token_path(target) {
+                return Ok(());
+            }
+            return Err(format!(
+                "桌面已有同名文件，糕糕不会覆盖它：{}",
+                target.display()
+            ));
+        }
+        Err(error) => return Err(command_error(error)),
+    };
+
+    if let Err(error) = file.write_all(FOOD_TOKEN_BYTES) {
+        drop(file);
+        let _ = fs::remove_file(target);
+        return Err(command_error(error));
+    }
+    Ok(())
+}
+
+fn ensure_food_token_at(
+    desktop: &Path,
+    marker: &Path,
+    respect_first_run_marker: bool,
+) -> Result<PathBuf, String> {
+    let target = desktop.join(FOOD_TOKEN_FILENAME);
+    if respect_first_run_marker && marker.is_file() {
+        return Ok(target);
+    }
+
+    write_food_token(&target)?;
+    record_food_token_creation(marker)?;
+    Ok(target)
+}
+
+fn ensure_food_token_impl(
+    app: &AppHandle,
+    respect_first_run_marker: bool,
+) -> Result<PathBuf, String> {
+    let desktop = app.path().desktop_dir().map_err(command_error)?;
+    let marker = app
+        .path()
+        .app_data_dir()
+        .map_err(command_error)?
+        .join(FOOD_TOKEN_MARKER_FILENAME);
+    ensure_food_token_at(&desktop, &marker, respect_first_run_marker)
 }
 
 fn resolve_window(
@@ -167,9 +246,6 @@ fn set_pet_visible_impl(
         pet.show().map_err(command_error)?;
     } else {
         pet.hide().map_err(command_error)?;
-        if let Some(bubble) = app.get_webview_window(BUBBLE_WINDOW) {
-            let _ = bubble.hide();
-        }
     }
 
     let text = if visible {
@@ -192,11 +268,6 @@ fn set_paused_impl(app: &AppHandle, state: &NativeState, paused: bool) -> bool {
     };
     let _ = state.tray_pause.set_text(text);
     let _ = state.pet_pause.set_text(text);
-    if paused {
-        if let Some(bubble) = app.get_webview_window(BUBBLE_WINDOW) {
-            let _ = bubble.hide();
-        }
-    }
     let _ = app.emit(EVENT_PAUSE_CHANGED, paused);
     paused
 }
@@ -206,12 +277,10 @@ fn set_always_on_top_impl(
     state: &NativeState,
     enabled: bool,
 ) -> Result<bool, String> {
-    for label in [PET_WINDOW, BUBBLE_WINDOW] {
-        let window = app
-            .get_webview_window(label)
-            .ok_or_else(|| format!("window is not available: {label}"))?;
-        window.set_always_on_top(enabled).map_err(command_error)?;
-    }
+    let window = app
+        .get_webview_window(PET_WINDOW)
+        .ok_or_else(|| format!("window is not available: {PET_WINDOW}"))?;
+    window.set_always_on_top(enabled).map_err(command_error)?;
 
     state.always_on_top.store(enabled, Ordering::Relaxed);
     let _ = state.tray_always_on_top.set_checked(enabled);
@@ -251,14 +320,11 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             set_paused_impl(app, &state, paused);
             Ok(())
         }
-        MENU_SAY_PHRASE => {
-            let _ = set_pet_visible_impl(app, &state, true);
-            app.emit(EVENT_SAY_PHRASE, ()).map_err(command_error)
-        }
         MENU_GROOMING => {
             let _ = set_pet_visible_impl(app, &state, true);
             app.emit(EVENT_GROOMING, ()).map_err(command_error)
         }
+        MENU_FOOD_TOKEN => ensure_food_token_impl(app, false).map(|_| ()),
         MENU_ALWAYS_ON_TOP => {
             let enabled = !state.always_on_top.load(Ordering::Relaxed);
             set_always_on_top_impl(app, &state, enabled).map(|_| ())
@@ -285,8 +351,9 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
     let tray_toggle_pet = MenuItem::with_id(app, MENU_TOGGLE_PET, "隐藏糕糕", true, None::<&str>)?;
     let tray_pause = MenuItem::with_id(app, MENU_PAUSE, "暂停活动", true, None::<&str>)?;
-    let tray_say_phrase = MenuItem::with_id(app, MENU_SAY_PHRASE, "说句话", true, None::<&str>)?;
     let tray_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
+    let tray_food_token =
+        MenuItem::with_id(app, MENU_FOOD_TOKEN, "把猫条放回桌面", true, None::<&str>)?;
     let tray_always_on_top = CheckMenuItem::with_id(
         app,
         MENU_ALWAYS_ON_TOP,
@@ -309,8 +376,8 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_menu = MenuBuilder::new(app)
         .item(&tray_toggle_pet)
         .item(&tray_pause)
-        .item(&tray_say_phrase)
         .item(&tray_grooming)
+        .item(&tray_food_token)
         .separator()
         .item(&tray_always_on_top)
         .item(&tray_launch_at_login)
@@ -319,14 +386,12 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .item(&tray_quit)
         .build()?;
 
-    let pet_say_phrase = MenuItem::with_id(app, MENU_SAY_PHRASE, "说句话", true, None::<&str>)?;
     let pet_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
     let pet_pause = MenuItem::with_id(app, MENU_PAUSE, "暂停活动", true, None::<&str>)?;
     let pet_settings = MenuItem::with_id(app, MENU_SETTINGS, "设置…", true, None::<&str>)?;
     let pet_toggle_pet = MenuItem::with_id(app, MENU_TOGGLE_PET, "隐藏糕糕", true, None::<&str>)?;
     let pet_quit = MenuItem::with_id(app, MENU_QUIT, "退出糕糕", true, None::<&str>)?;
     let pet_menu = MenuBuilder::new(app)
-        .item(&pet_say_phrase)
         .item(&pet_grooming)
         .item(&pet_pause)
         .item(&pet_settings)
@@ -415,57 +480,14 @@ fn resize_window(
     geometry_for(&target)
 }
 
-/// Positions and optionally resizes the speech bubble using physical pixels.
 #[tauri::command]
-fn place_bubble(
-    app: AppHandle,
-    x: f64,
-    y: f64,
-    width: Option<f64>,
-    height: Option<f64>,
-) -> Result<WindowGeometry, String> {
-    let bubble = app
-        .get_webview_window(BUBBLE_WINDOW)
-        .ok_or_else(|| "bubble window is not available".to_owned())?;
-    let x = checked_coordinate(x, "x")?;
-    let y = checked_coordinate(y, "y")?;
-
-    match (width, height) {
-        (Some(width), Some(height)) => {
-            bubble
-                .set_size(PhysicalSize::new(
-                    checked_dimension(width, "width")?,
-                    checked_dimension(height, "height")?,
-                ))
-                .map_err(command_error)?;
-        }
-        (None, None) => {}
-        _ => return Err("width and height must be supplied together".to_owned()),
-    }
-
-    bubble
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(command_error)?;
-    geometry_for(&bubble)
+fn ensure_food_token(app: AppHandle) -> Result<String, String> {
+    ensure_food_token_impl(&app, false).map(|path| path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-fn show_bubble(app: AppHandle) -> Result<(), String> {
-    let bubble = app
-        .get_webview_window(BUBBLE_WINDOW)
-        .ok_or_else(|| "bubble window is not available".to_owned())?;
-    bubble
-        .set_ignore_cursor_events(true)
-        .map_err(command_error)?;
-    bubble.show().map_err(command_error)
-}
-
-#[tauri::command]
-fn hide_bubble(app: AppHandle) -> Result<(), String> {
-    app.get_webview_window(BUBBLE_WINDOW)
-        .ok_or_else(|| "bubble window is not available".to_owned())?
-        .hide()
-        .map_err(command_error)
+fn validate_food_token(path: String) -> bool {
+    validate_food_token_path(Path::new(&path))
 }
 
 #[tauri::command]
@@ -593,8 +615,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            if let Some(bubble) = app.get_webview_window(BUBBLE_WINDOW) {
-                bubble.set_ignore_cursor_events(true)?;
+            if let Err(error) = ensure_food_token_impl(app.handle(), true) {
+                // Desktop access can be denied independently of app startup. The
+                // tray action lets the user retry later without making launch fail.
+                eprintln!("initial food-token placement failed: {error}");
             }
 
             install_menus_and_tray(app)?;
@@ -620,9 +644,8 @@ pub fn run() {
             get_window_geometry,
             move_window,
             resize_window,
-            place_bubble,
-            show_bubble,
-            hide_bubble,
+            ensure_food_token,
+            validate_food_token,
             show_settings,
             hide_settings,
             set_pet_visible,
@@ -640,4 +663,91 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gaogao desktop pet");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TempTree(PathBuf);
+
+    impl TempTree {
+        fn new(name: &str) -> Self {
+            let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "gaogao-desktop-pet-{name}-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn validates_only_the_complete_embedded_food_token() {
+        let tree = TempTree::new("validate-food-token");
+        let official = tree.0.join("official.png");
+        fs::write(&official, FOOD_TOKEN_BYTES).expect("write official token");
+        assert!(validate_food_token_path(&official));
+
+        let mut altered = FOOD_TOKEN_BYTES.to_vec();
+        assert!(!altered.is_empty());
+        altered[0] ^= 0xff;
+        let same_size_but_different = tree.0.join("different.png");
+        fs::write(&same_size_but_different, altered).expect("write altered token");
+        assert!(!validate_food_token_path(&same_size_but_different));
+
+        let ordinary = tree.0.join("ordinary.txt");
+        fs::write(&ordinary, b"not a cat treat").expect("write ordinary file");
+        assert!(!validate_food_token_path(&ordinary));
+        assert!(!validate_food_token_path(&tree.0));
+    }
+
+    #[test]
+    fn first_run_marker_prevents_automatic_recreation_but_manual_retry_restores_it() {
+        let tree = TempTree::new("first-run-marker");
+        let desktop = tree.0.join("Desktop");
+        let marker = tree.0.join("AppData").join(FOOD_TOKEN_MARKER_FILENAME);
+        fs::create_dir_all(&desktop).expect("create desktop");
+
+        let target = ensure_food_token_at(&desktop, &marker, true).expect("place first token");
+        assert_eq!(target, desktop.join(FOOD_TOKEN_FILENAME));
+        assert!(validate_food_token_path(&target));
+        assert!(marker.is_file());
+
+        fs::remove_file(&target).expect("remove desktop token");
+        ensure_food_token_at(&desktop, &marker, true).expect("honor first-run marker");
+        assert!(!target.exists());
+
+        ensure_food_token_at(&desktop, &marker, false).expect("manual retry");
+        assert!(validate_food_token_path(&target));
+    }
+
+    #[test]
+    fn never_overwrites_a_different_same_name_file() {
+        let tree = TempTree::new("no-overwrite");
+        let desktop = tree.0.join("Desktop");
+        let marker = tree.0.join("AppData").join(FOOD_TOKEN_MARKER_FILENAME);
+        fs::create_dir_all(&desktop).expect("create desktop");
+        let target = desktop.join(FOOD_TOKEN_FILENAME);
+        fs::write(&target, b"user-owned contents").expect("write user file");
+
+        let error = ensure_food_token_at(&desktop, &marker, false)
+            .expect_err("different same-name file must not be overwritten");
+        assert!(error.contains("不会覆盖"));
+        assert_eq!(
+            fs::read(&target).expect("read user file"),
+            b"user-owned contents"
+        );
+        assert!(!marker.exists());
+    }
 }

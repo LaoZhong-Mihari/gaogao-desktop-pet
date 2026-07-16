@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type WindowLabel = "pet" | "bubble" | "settings";
+export type WindowLabel = "pet" | "settings";
 
 export interface Point {
   x: number;
@@ -70,31 +70,6 @@ export async function resizeWindow(
   });
 }
 
-export async function placeBubble(
-  x: number,
-  y: number,
-  width = 280,
-  height = 104,
-): Promise<void> {
-  if (!isTauriRuntime()) return;
-  await invoke("place_bubble", {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.round(width),
-    height: Math.round(height),
-  });
-}
-
-export async function showBubble(): Promise<void> {
-  if (!isTauriRuntime()) return;
-  await invoke("show_bubble");
-}
-
-export async function hideBubble(): Promise<void> {
-  if (!isTauriRuntime()) return;
-  await invoke("hide_bubble");
-}
-
 export async function showSettings(): Promise<void> {
   if (!isTauriRuntime()) return;
   await invoke("show_settings");
@@ -134,6 +109,16 @@ export async function getLaunchAtLogin(): Promise<boolean> {
 export async function showPetMenu(): Promise<void> {
   if (!isTauriRuntime()) return;
   await invoke("show_pet_menu");
+}
+
+export async function ensureFoodToken(): Promise<string> {
+  return isTauriRuntime() ? invoke<string>("ensure_food_token") : "";
+}
+
+export async function validateFoodToken(path: string): Promise<boolean> {
+  return isTauriRuntime()
+    ? invoke<boolean>("validate_food_token", { path })
+    : false;
 }
 
 export function runtimeAvailable(): boolean {
