@@ -4,12 +4,14 @@ import {
   PetStateMachine,
   OCCASIONAL_ATTENTION_DURATION_MS,
   actionHoldDurationMs,
+  attentionDirectionFromGlobalPoint,
   animationFrameRect,
   createRoamPlan,
   extractAlphaMask,
   groundedWindowPosition,
   hitTestAlphaMask,
   loadPetManifest,
+  lookDirectionFrameRect,
   nextOccasionalAttentionDelayMs,
   pickAmbientAnimation,
   stepHorizontalRoam,
@@ -25,7 +27,9 @@ import {
 import {
   bottomCenterAnchoredPosition,
   effectivePetScale,
+  hasFeedingGrowth,
   nextGrowthBonus,
+  resetFeedingGrowth,
   singleDroppedPath,
 } from "../core/feeding";
 import { loadSettings, saveSettings } from "../app/store";
@@ -39,6 +43,7 @@ import {
   setIgnoreCursorEvents,
   setLaunchAtLogin,
   setPetVisible,
+  setGrowthResetEnabled,
   showPetMenu,
   showSettings,
   validateFoodToken,
@@ -114,6 +119,7 @@ class PetController {
   private paused = false;
   private fileDragActive = false;
   private foodDropPending = false;
+  private fileAttentionRevision = 0;
   private lastInteraction = Date.now();
   private lastIgnoreCursor: boolean | null = null;
 
@@ -174,6 +180,10 @@ class PetController {
     this.animationRevision += 1;
     if (this.animationTimer !== null) window.clearTimeout(this.animationTimer);
     this.animationTimer = null;
+    if (state.pose.kind === "look") {
+      this.drawFrame(lookDirectionFrameRect(this.manifest, state.pose.direction));
+      return;
+    }
     this.playAnimation(state.pose.animation, this.animationRevision);
   }
 
@@ -312,6 +322,7 @@ class PetController {
       void this.applySettings(updateSettings(this.settings, { ...payload }), false, false);
     });
     await listen("command://reset-position", () => void this.resetPosition());
+    await listen("tray://reset-growth", () => void this.resetFeedingGrowth());
     await listen<boolean>("tray://pause-changed", ({ payload }) => this.setPaused(payload));
     await listen("tray://grooming", () => this.playDirect("grooming"));
     await listen<boolean>("tray://always-on-top-changed", ({ payload }) => {
@@ -346,6 +357,7 @@ class PetController {
     const nextScale = effectivePetScale(next.scale, next.growthBonus);
     this.settings = next;
     const writes: Promise<unknown>[] = [saveSettings(next)];
+    writes.push(setGrowthResetEnabled(hasFeedingGrowth(next.growthBonus)));
     if (syncNative) {
       writes.push(
         setAlwaysOnTop(next.alwaysOnTop),
@@ -406,25 +418,42 @@ class PetController {
     }
     this.occasionalAttentionTimer = window.setTimeout(() => {
       this.occasionalAttentionTimer = null;
-      this.runOccasionalAttention();
+      void this.runOccasionalAttention();
       this.scheduleOccasionalAttention();
     }, nextOccasionalAttentionDelayMs());
   }
 
-  private runOccasionalAttention(): void {
+  private canRunOccasionalAttention(): boolean {
+    return (
+      !this.paused &&
+      this.settings.attentionEnabled &&
+      this.roam === null &&
+      this.drag === null &&
+      !this.fileDragActive &&
+      this.stateMachine.current.source === "idle"
+    );
+  }
+
+  private async runOccasionalAttention(): Promise<void> {
+    if (!this.canRunOccasionalAttention()) return;
+    const [cursor, geometry] = await Promise.all([
+      getCursorPosition(),
+      getWindowGeometry("pet"),
+    ]);
     if (
-      this.paused ||
-      !this.settings.attentionEnabled ||
-      this.roam !== null ||
-      this.drag !== null ||
-      this.fileDragActive ||
-      this.stateMachine.current.source !== "idle"
+      !this.canRunOccasionalAttention()
     ) {
       return;
     }
+    const direction = attentionDirectionFromGlobalPoint(
+      cursor,
+      geometry,
+      24 * geometry.scaleFactor,
+    );
+    if (direction === null) return;
     this.stateMachine.setIntent(
       "attention",
-      { kind: "animation", animation: "review" },
+      { kind: "look", direction },
       OCCASIONAL_ATTENTION_DURATION_MS,
     );
   }
@@ -434,33 +463,55 @@ class PetController {
     await getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type === "enter") {
         this.fileDragActive = true;
+        this.fileAttentionRevision += 1;
         this.stopRoaming();
         void this.setCursorPassthrough(false);
-        this.noticeDraggedFile();
+        void this.noticeDraggedFile(this.fileAttentionRevision);
         return;
       }
       if (payload.type === "over") {
         this.fileDragActive = true;
-        this.noticeDraggedFile();
+        this.fileAttentionRevision += 1;
+        void this.noticeDraggedFile(this.fileAttentionRevision);
         return;
       }
       if (payload.type === "drop") {
         this.fileDragActive = false;
+        this.fileAttentionRevision += 1;
         this.stateMachine.clearIntent("attention");
         void this.handleFileDrop(payload.paths);
         return;
       }
       this.fileDragActive = false;
+      this.fileAttentionRevision += 1;
       this.stateMachine.clearIntent("attention");
     });
   }
 
-  private noticeDraggedFile(): void {
+  private async noticeDraggedFile(revision: number): Promise<void> {
     if (this.paused || !this.settings.attentionEnabled) return;
-    this.stateMachine.setIntent("attention", {
-      kind: "animation",
-      animation: "review",
-    });
+    const [cursor, geometry] = await Promise.all([
+      getCursorPosition(),
+      getWindowGeometry("pet"),
+    ]);
+    if (
+      revision !== this.fileAttentionRevision ||
+      !this.fileDragActive ||
+      this.paused ||
+      !this.settings.attentionEnabled
+    ) {
+      return;
+    }
+    const direction = attentionDirectionFromGlobalPoint(
+      cursor,
+      geometry,
+      8 * geometry.scaleFactor,
+    );
+    if (direction === null) {
+      this.stateMachine.clearIntent("attention");
+      return;
+    }
+    this.stateMachine.setIntent("attention", { kind: "look", direction });
   }
 
   private async handleFileDrop(paths: readonly string[]): Promise<void> {
@@ -480,6 +531,17 @@ class PetController {
       }
     } finally {
       this.foodDropPending = false;
+    }
+  }
+
+  private async resetFeedingGrowth(): Promise<void> {
+    if (!hasFeedingGrowth(this.settings.growthBonus)) return;
+    const next = updateSettings(this.settings, {
+      growthBonus: resetFeedingGrowth(this.settings.growthBonus),
+    });
+    await this.applySettings(next, false, false);
+    if (runtimeAvailable()) {
+      await emitTo("settings", "pet://settings-changed", this.settings);
     }
   }
 
@@ -649,6 +711,14 @@ class PetController {
 }
 
 async function atlasPixels(image: HTMLImageElement, manifest: PetManifest): Promise<ImageData> {
+  if (
+    image.naturalWidth !== manifest.spritesheet.width ||
+    image.naturalHeight !== manifest.spritesheet.height
+  ) {
+    throw new Error(
+      `糕糕图集尺寸不匹配：实际 ${image.naturalWidth}×${image.naturalHeight}，清单 ${manifest.spritesheet.width}×${manifest.spritesheet.height}`,
+    );
+  }
   const canvas = document.createElement("canvas");
   canvas.width = manifest.spritesheet.width;
   canvas.height = manifest.spritesheet.height;

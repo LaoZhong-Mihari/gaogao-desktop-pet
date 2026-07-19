@@ -6,7 +6,9 @@ import {
   bottomCenterAnchoredPosition,
   effectivePetScale,
   feedingGrowthFromRandom,
+  hasFeedingGrowth,
   nextGrowthBonus,
+  resetFeedingGrowth,
   singleDroppedPath,
 } from "../src/core/feeding";
 import { MAX_GROWTH_BONUS } from "../src/core/settings";
@@ -38,6 +40,14 @@ describe("feeding growth", () => {
     expect(effectivePetScale(1, 0.05)).toBeCloseTo(1.05);
     expect(effectivePetScale(1.5, 0.5)).toBeCloseTo(2.25);
     expect(effectivePetScale(0.75, -1)).toBe(0.75);
+  });
+
+  it("restores only feeding growth, leaving the configured base scale intact", () => {
+    expect(hasFeedingGrowth(0)).toBe(false);
+    expect(hasFeedingGrowth(0.02)).toBe(true);
+    expect(resetFeedingGrowth(0.28)).toBe(0);
+    expect(effectivePetScale(1.5, resetFeedingGrowth(0.28))).toBe(1.5);
+    expect(() => resetFeedingGrowth(Number.NaN)).toThrow(RangeError);
   });
 
   it("keeps horizontal center and bottom edge fixed while resizing", () => {

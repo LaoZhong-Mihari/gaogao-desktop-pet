@@ -24,6 +24,7 @@ const MENU_TOGGLE_PET: &str = "toggle-pet";
 const MENU_PAUSE: &str = "pause-resume";
 const MENU_GROOMING: &str = "grooming";
 const MENU_FOOD_TOKEN: &str = "food-token";
+const MENU_RESET_GROWTH: &str = "reset-growth";
 const MENU_ALWAYS_ON_TOP: &str = "always-on-top";
 const MENU_LAUNCH_AT_LOGIN: &str = "launch-at-login";
 const MENU_SETTINGS: &str = "settings";
@@ -31,6 +32,7 @@ const MENU_QUIT: &str = "quit";
 
 const EVENT_PAUSE_CHANGED: &str = "tray://pause-changed";
 const EVENT_GROOMING: &str = "tray://grooming";
+const EVENT_RESET_GROWTH: &str = "tray://reset-growth";
 const EVENT_ALWAYS_ON_TOP_CHANGED: &str = "tray://always-on-top-changed";
 const EVENT_LAUNCH_AT_LOGIN_CHANGED: &str = "tray://launch-at-login-changed";
 const EVENT_VISIBILITY_CHANGED: &str = "tray://visibility-changed";
@@ -41,10 +43,12 @@ struct NativeState {
     launch_at_login: AtomicBool,
     tray_toggle_pet: MenuItem<Wry>,
     tray_pause: MenuItem<Wry>,
+    tray_reset_growth: MenuItem<Wry>,
     tray_always_on_top: CheckMenuItem<Wry>,
     tray_launch_at_login: CheckMenuItem<Wry>,
     pet_toggle_pet: MenuItem<Wry>,
     pet_pause: MenuItem<Wry>,
+    pet_reset_growth: MenuItem<Wry>,
     pet_menu: Menu<Wry>,
 }
 
@@ -325,6 +329,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             app.emit(EVENT_GROOMING, ()).map_err(command_error)
         }
         MENU_FOOD_TOKEN => ensure_food_token_impl(app, false).map(|_| ()),
+        MENU_RESET_GROWTH => app.emit(EVENT_RESET_GROWTH, ()).map_err(command_error),
         MENU_ALWAYS_ON_TOP => {
             let enabled = !state.always_on_top.load(Ordering::Relaxed);
             set_always_on_top_impl(app, &state, enabled).map(|_| ())
@@ -354,6 +359,8 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
     let tray_food_token =
         MenuItem::with_id(app, MENU_FOOD_TOKEN, "把猫条放回桌面", true, None::<&str>)?;
+    let tray_reset_growth =
+        MenuItem::with_id(app, MENU_RESET_GROWTH, "恢复原大小", false, None::<&str>)?;
     let tray_always_on_top = CheckMenuItem::with_id(
         app,
         MENU_ALWAYS_ON_TOP,
@@ -378,6 +385,7 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .item(&tray_pause)
         .item(&tray_grooming)
         .item(&tray_food_token)
+        .item(&tray_reset_growth)
         .separator()
         .item(&tray_always_on_top)
         .item(&tray_launch_at_login)
@@ -388,12 +396,15 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
     let pet_grooming = MenuItem::with_id(app, MENU_GROOMING, "颓废舔毛", true, None::<&str>)?;
     let pet_pause = MenuItem::with_id(app, MENU_PAUSE, "暂停活动", true, None::<&str>)?;
+    let pet_reset_growth =
+        MenuItem::with_id(app, MENU_RESET_GROWTH, "恢复原大小", false, None::<&str>)?;
     let pet_settings = MenuItem::with_id(app, MENU_SETTINGS, "设置…", true, None::<&str>)?;
     let pet_toggle_pet = MenuItem::with_id(app, MENU_TOGGLE_PET, "隐藏糕糕", true, None::<&str>)?;
     let pet_quit = MenuItem::with_id(app, MENU_QUIT, "退出糕糕", true, None::<&str>)?;
     let pet_menu = MenuBuilder::new(app)
         .item(&pet_grooming)
         .item(&pet_pause)
+        .item(&pet_reset_growth)
         .item(&pet_settings)
         .separator()
         .item(&pet_toggle_pet)
@@ -415,10 +426,12 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         launch_at_login: AtomicBool::new(launch_at_login),
         tray_toggle_pet,
         tray_pause,
+        tray_reset_growth,
         tray_always_on_top,
         tray_launch_at_login,
         pet_toggle_pet,
         pet_pause,
+        pet_reset_growth,
         pet_menu,
     });
 
@@ -586,6 +599,12 @@ fn get_paused(state: State<NativeState>) -> bool {
 }
 
 #[tauri::command]
+fn set_growth_reset_enabled(state: State<NativeState>, enabled: bool) {
+    let _ = state.tray_reset_growth.set_enabled(enabled);
+    let _ = state.pet_reset_growth.set_enabled(enabled);
+}
+
+#[tauri::command]
 fn show_pet_menu(window: WebviewWindow, state: State<NativeState>) -> Result<(), String> {
     if window.label() != PET_WINDOW {
         return Err("the native pet menu can only be shown by the pet window".to_owned());
@@ -659,6 +678,7 @@ pub fn run() {
             toggle_launch_at_login,
             set_paused,
             get_paused,
+            set_growth_reset_enabled,
             show_pet_menu,
         ])
         .run(tauri::generate_context!())

@@ -34,7 +34,7 @@ describe("PetStateMachine", () => {
       pose: { kind: "animation", animation: "idle" },
     });
 
-    machine.setIntent("attention", { kind: "animation", animation: "review" });
+    machine.setIntent("attention", { kind: "look", direction: 4 });
     expect(machine.current.source).toBe("attention");
     machine.setIntent("roam", { kind: "animation", animation: "running-right" });
     expect(machine.current.source).toBe("roam");
@@ -53,14 +53,14 @@ describe("PetStateMachine", () => {
     const scheduler = new ControllableScheduler();
     const listener = vi.fn();
     const machine = new PetStateMachine({ scheduler, onChange: listener });
-    machine.setIntent("attention", { kind: "animation", animation: "review" });
+    machine.setIntent("attention", { kind: "look", direction: 12 });
     machine.setIntent("direct", { kind: "animation", animation: "waving" }, 700);
     expect(machine.current.source).toBe("direct");
 
     scheduler.fire(1);
     expect(machine.current).toEqual({
       source: "attention",
-      pose: { kind: "animation", animation: "review" },
+      pose: { kind: "look", direction: 12 },
     });
     expect(listener).toHaveBeenCalledTimes(3);
   });
@@ -94,7 +94,7 @@ describe("PetStateMachine", () => {
   it("clears every transient timer and rejects use after disposal", () => {
     const scheduler = new ControllableScheduler();
     const machine = new PetStateMachine({ scheduler });
-    machine.setIntent("attention", { kind: "animation", animation: "review" }, 100);
+    machine.setIntent("attention", { kind: "look", direction: 0 }, 100);
     machine.setIntent("roam", { kind: "animation", animation: "running-right" }, 200);
     machine.resetTransientIntents();
     expect(machine.current.source).toBe("idle");
@@ -111,5 +111,14 @@ describe("PetStateMachine", () => {
     expect(() =>
       machine.setIntent("direct", { kind: "animation", animation: "waving" }, 0),
     ).toThrow(RangeError);
+  });
+
+  it("notifies when an attention image changes to a different direction", () => {
+    const listener = vi.fn();
+    const machine = new PetStateMachine({ onChange: listener });
+    machine.setIntent("attention", { kind: "look", direction: 4 });
+    machine.setIntent("attention", { kind: "look", direction: 5 });
+    expect(machine.current.pose).toEqual({ kind: "look", direction: 5 });
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 });

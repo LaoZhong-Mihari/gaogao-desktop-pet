@@ -6,27 +6,27 @@
   "spritesheet": {
     "src": "/assets/spritesheet.webp",
     "width": 1536,
-    "height": 2080,
+    "height": 2496,
     "columns": 8,
-    "rows": 10,
+    "rows": 12,
     "frameWidth": 192,
     "frameHeight": 208
   },
   "neutralFrame": {
     "row": 0,
-    "column": 6
+    "column": 0
   },
   "animations": {
     "idle": {
       "row": 0,
       "loop": true,
       "frames": [
-        { "column": 0, "durationMs": 280 },
-        { "column": 1, "durationMs": 110 },
-        { "column": 2, "durationMs": 110 },
-        { "column": 3, "durationMs": 140 },
-        { "column": 4, "durationMs": 140 },
-        { "column": 5, "durationMs": 320 }
+        { "column": 0, "durationMs": 1680 },
+        { "column": 1, "durationMs": 660 },
+        { "column": 2, "durationMs": 660 },
+        { "column": 3, "durationMs": 840 },
+        { "column": 4, "durationMs": 840 },
+        { "column": 5, "durationMs": 1920 }
       ]
     },
     "running-right": {
@@ -129,7 +129,7 @@
       ]
     },
     "grooming": {
-      "row": 9,
+      "row": 11,
       "loop": true,
       "frames": [
         { "column": 0, "durationMs": 300 },
@@ -140,5 +140,23 @@
         { "column": 5, "durationMs": 300 }
       ]
     }
-  }
+  },
+  "lookDirections": [
+    { "index": 0, "degrees": 0, "name": "N", "row": 9, "column": 0 },
+    { "index": 1, "degrees": 22.5, "name": "NNE", "row": 9, "column": 1 },
+    { "index": 2, "degrees": 45, "name": "NE", "row": 9, "column": 2 },
+    { "index": 3, "degrees": 67.5, "name": "ENE", "row": 9, "column": 3 },
+    { "index": 4, "degrees": 90, "name": "E", "row": 9, "column": 4 },
+    { "index": 5, "degrees": 112.5, "name": "ESE", "row": 9, "column": 5 },
+    { "index": 6, "degrees": 135, "name": "SE", "row": 9, "column": 6 },
+    { "index": 7, "degrees": 157.5, "name": "SSE", "row": 9, "column": 7 },
+    { "index": 8, "degrees": 180, "name": "S", "row": 10, "column": 0 },
+    { "index": 9, "degrees": 202.5, "name": "SSW", "row": 10, "column": 1 },
+    { "index": 10, "degrees": 225, "name": "SW", "row": 10, "column": 2 },
+    { "index": 11, "degrees": 247.5, "name": "WSW", "row": 10, "column": 3 },
+    { "index": 12, "degrees": 270, "name": "W", "row": 10, "column": 4 },
+    { "index": 13, "degrees": 292.5, "name": "WNW", "row": 10, "column": 5 },
+    { "index": 14, "degrees": 315, "name": "NW", "row": 10, "column": 6 },
+    { "index": 15, "degrees": 337.5, "name": "NNW", "row": 10, "column": 7 }
+  ]
 }

@@ -2,6 +2,7 @@ export * from "./alpha-hit-test";
 export * from "./action-timing";
 export * from "./ambient";
 export * from "./attention-behavior";
+export * from "./direction";
 export * from "./manifest";
 export * from "./roaming";
 export * from "./settings";

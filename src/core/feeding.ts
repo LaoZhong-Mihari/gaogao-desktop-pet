@@ -47,6 +47,19 @@ export function nextGrowthBonus(
   );
 }
 
+/** Whether feeding growth can be removed without changing the configured base scale. */
+export function hasFeedingGrowth(growthBonus: number): boolean {
+  return Number.isFinite(growthBonus) && growthBonus > 0;
+}
+
+/** Restoring size clears only accumulated feeding growth, never the chosen base scale. */
+export function resetFeedingGrowth(growthBonus: number): number {
+  if (!Number.isFinite(growthBonus)) {
+    throw new RangeError("growthBonus must be finite");
+  }
+  return 0;
+}
+
 export function effectivePetScale(baseScale: PetScale, growthBonus: number): number {
   if (!Number.isFinite(growthBonus)) {
     throw new RangeError("growthBonus must be finite");

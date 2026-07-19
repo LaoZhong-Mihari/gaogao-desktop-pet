@@ -46,14 +46,15 @@ Get-FileHash .\*.exe -Algorithm SHA256
 - 单击糕糕：挥爪。
 - 双击糕糕：跳跃。
 - 右键糕糕：打开快捷菜单，可直接触发“颓废舔毛”。
-- 偶尔注意：空闲时糕糕会随机短暂进入原有的 `review` 姿势；不会实时追踪鼠标，也不使用额外绘制的脸或方向图。
-- 拖动文件靠近：文件进入糕糕窗口时会触发同一个原有注意动作。
-- 喂猫条：首次启动会在桌面放置“糕糕的猫条（拖给糕糕）.png”。把它拖进糕糕窗口，验证成功后糕糕会直接永久长大 2–5%，累计最多 50%；猫条可以重复使用。
+- 偶尔注视：空闲时糕糕会在随机时刻读取一次鼠标位置，从 16 张完整手绘方向帧中选择一张；不会实时追踪鼠标，也不会用脚本叠加表情或瞳孔。
+- 拖动文件靠近：文件进入糕糕窗口时，糕糕会用同一套 16 方向完整像素帧看向文件。
+- 喂猫条：首次启动会在桌面放置“糕糕的猫条（拖给糕糕）.png”。把它拖进糕糕窗口，验证成功后糕糕会直接长大 2–5%，累计最多 50%；猫条可以重复使用。需要恢复时，可从糕糕右键菜单或托盘选择“恢复原大小”，只清除喂食增量，不改变设置中的基础尺寸。
 - 放着不管：糕糕会随机发呆、忙碌或连续颓废舔毛；空闲约 45 秒后也可能从当前位置开始左右散步。
+- 待机节奏：使用 Codex Pet 实际运行时的 6× 慢速节奏，一轮约 6.6 秒。
 
 ![糕糕颓废舔毛动作](docs/assets/grooming-preview.gif)
 
-托盘菜单提供显示/隐藏、暂停/继续、颓废舔毛、把猫条放回桌面、始终置顶、开机启动、设置和退出。设置页可调整：
+托盘菜单提供显示/隐藏、暂停/继续、颓废舔毛、把猫条放回桌面、恢复原大小、始终置顶、开机启动、设置和退出。设置页可调整：
 
 - 显示尺寸：75%、100%、125% 或 150%；
 - 始终置顶、偶尔注意鼠标和文件、自动漫步；
@@ -119,11 +120,11 @@ npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
 推送 `v*` 标签会触发 GitHub Actions，在 macOS 与 Windows runner 上构建原生安装包，并创建 prerelease：
 
 ```bash
-git tag v0.1.0-beta.5
-git push origin v0.1.0-beta.5
+git tag v0.1.0-beta.6
+git push origin v0.1.0-beta.6
 ```
 
-发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.5` 对应标签 `v0.1.0-beta.5`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
+发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.6` 对应标签 `v0.1.0-beta.6`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
 
 ## 许可
 

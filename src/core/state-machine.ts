@@ -1,12 +1,18 @@
+import type { DirectionIndex } from "./direction";
 import type { BaseAnimationId } from "./manifest";
 
 export type PetIntentSource = "idle" | "attention" | "roam" | "direct";
 export type TransientIntentSource = Exclude<PetIntentSource, "idle">;
 
-export interface PetPose {
-  readonly kind: "animation";
-  readonly animation: BaseAnimationId;
-}
+export type PetPose =
+  | {
+      readonly kind: "animation";
+      readonly animation: BaseAnimationId;
+    }
+  | {
+      readonly kind: "look";
+      readonly direction: DirectionIndex;
+    };
 
 export interface ActivePetState {
   readonly source: PetIntentSource;
@@ -44,7 +50,10 @@ const DEFAULT_SCHEDULER: TimerScheduler = {
 const DEFAULT_IDLE_POSE: PetPose = { kind: "animation", animation: "idle" };
 
 function samePose(left: PetPose, right: PetPose): boolean {
-  return left.animation === right.animation;
+  if (left.kind !== right.kind) return false;
+  return left.kind === "look"
+    ? left.direction === (right as Extract<PetPose, { kind: "look" }>).direction
+    : left.animation === (right as Extract<PetPose, { kind: "animation" }>).animation;
 }
 
 function sameState(left: ActivePetState, right: ActivePetState): boolean {

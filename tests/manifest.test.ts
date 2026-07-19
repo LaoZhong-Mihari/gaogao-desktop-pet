@@ -5,6 +5,7 @@ import {
   animationDurationMs,
   animationFrameRect,
   loadPetManifest,
+  lookDirectionFrameRect,
   ManifestValidationError,
   parsePetManifest,
   parsePetManifestJson,
@@ -16,18 +17,19 @@ function copyManifest(): Record<string, any> {
 }
 
 describe("pet manifest", () => {
-  it("parses the bundled 8x10 atlas definition", () => {
+  it("parses the bundled 8x12 atlas with 16 image-drawn look frames", () => {
     const manifest = parsePetManifest(manifestData);
     expect(manifest.spritesheet).toMatchObject({
       width: 1536,
-      height: 2080,
+      height: 2496,
       columns: 8,
-      rows: 10,
+      rows: 12,
       frameWidth: 192,
       frameHeight: 208,
     });
     expect(Object.keys(manifest.animations)).toHaveLength(10);
-    expect(manifest.neutralFrame).toEqual({ row: 0, column: 6 });
+    expect(manifest.lookDirections).toHaveLength(16);
+    expect(manifest.neutralFrame).toEqual({ row: 0, column: 0 });
   });
 
   it("maps all ten base actions to their fixed rows and frame counts", () => {
@@ -42,7 +44,7 @@ describe("pet manifest", () => {
       waiting: [6, 6],
       running: [7, 6],
       review: [8, 6],
-      grooming: [9, 6],
+      grooming: [11, 6],
     } as const;
     for (const [id, [row, frameCount]] of Object.entries(expected)) {
       const animation = manifest.animations[id as keyof typeof expected];
@@ -54,6 +56,7 @@ describe("pet manifest", () => {
   it("computes animation duration and exact atlas rectangles", () => {
     const manifest = parsePetManifest(manifestData);
     expect(animationDurationMs(manifest, "waving")).toBe(700);
+    expect(animationDurationMs(manifest, "idle")).toBe(6_600);
     expect(animationDurationMs(manifest, "grooming")).toBe(1400);
     expect(animationFrameRect(manifest, "running-right", 7)).toEqual({
       x: 1344,
@@ -63,7 +66,13 @@ describe("pet manifest", () => {
     });
     expect(animationFrameRect(manifest, "grooming", 5)).toEqual({
       x: 960,
-      y: 1872,
+      y: 2288,
+      width: 192,
+      height: 208,
+    });
+    expect(lookDirectionFrameRect(manifest, 15)).toEqual({
+      x: 1344,
+      y: 2080,
       width: 192,
       height: 208,
     });
@@ -89,6 +98,35 @@ describe("pet manifest", () => {
     expect(issues).toContain("animations.jumping must be an object");
     expect(issues).toContain(
       "animations.waving.frames[1].column is duplicated within the animation",
+    );
+  });
+
+  it("keeps animation rows out of the fixed direction rows", () => {
+    const invalid = copyManifest();
+    invalid.animations.grooming.row = 9;
+    expect(validatePetManifest(invalid)).toContain("animations.grooming.row must be 11");
+  });
+
+  it("rejects incomplete, misordered, and duplicate look direction cells", () => {
+    const incomplete = copyManifest();
+    incomplete.lookDirections.pop();
+    expect(validatePetManifest(incomplete)).toContain(
+      "lookDirections must contain exactly 16 entries",
+    );
+
+    const invalid = copyManifest();
+    invalid.lookDirections[1].degrees = 45;
+    invalid.lookDirections[1].row = 11;
+    invalid.lookDirections[1].column = 0;
+    const issues = validatePetManifest(invalid);
+    expect(issues).toContain("lookDirections[1].degrees must be 22.5");
+    expect(issues).toContain("lookDirections[1].row must be 9");
+    expect(issues).toContain("lookDirections[1].column must be 1");
+
+    const duplicate = copyManifest();
+    duplicate.lookDirections[1].column = 0;
+    expect(validatePetManifest(duplicate)).toContain(
+      "lookDirections[1] reuses atlas cell 9:0",
     );
   });
 

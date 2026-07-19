@@ -29,7 +29,7 @@ describe("settings normalization", () => {
     });
   });
 
-  it("migrates the beta.4 look preference to non-directional attention", () => {
+  it("migrates the beta.4 look preference to event-driven attention", () => {
     expect(normalizeSettings({ followCursor: false }).attentionEnabled).toBe(true);
     expect(normalizeSettings({ lookEnabled: false }).attentionEnabled).toBe(false);
     expect(

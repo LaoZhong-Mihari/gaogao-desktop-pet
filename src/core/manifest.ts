@@ -1,3 +1,9 @@
+import {
+  DIRECTION_STEPS,
+  type DirectionIndex,
+  type DirectionName,
+} from "./direction";
+
 export const BASE_ANIMATION_IDS = [
   "idle",
   "running-right",
@@ -12,6 +18,21 @@ export const BASE_ANIMATION_IDS = [
 ] as const;
 
 export type BaseAnimationId = (typeof BASE_ANIMATION_IDS)[number];
+
+const BASE_ANIMATION_LAYOUT: Readonly<
+  Record<BaseAnimationId, { readonly row: number; readonly frames: number }>
+> = Object.freeze({
+  idle: { row: 0, frames: 6 },
+  "running-right": { row: 1, frames: 8 },
+  "running-left": { row: 2, frames: 8 },
+  waving: { row: 3, frames: 4 },
+  jumping: { row: 4, frames: 5 },
+  failed: { row: 5, frames: 8 },
+  waiting: { row: 6, frames: 6 },
+  running: { row: 7, frames: 6 },
+  review: { row: 8, frames: 6 },
+  grooming: { row: 11, frames: 6 },
+});
 
 export interface AtlasFrameReference {
   readonly row: number;
@@ -39,6 +60,12 @@ export interface SpritesheetDefinition {
   readonly frameHeight: number;
 }
 
+export interface LookDirectionDefinition extends AtlasFrameReference {
+  readonly index: DirectionIndex;
+  readonly degrees: number;
+  readonly name: DirectionName;
+}
+
 export interface PetManifest {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -47,6 +74,7 @@ export interface PetManifest {
   readonly spritesheet: SpritesheetDefinition;
   readonly neutralFrame: AtlasFrameReference;
   readonly animations: Readonly<Record<BaseAnimationId, AnimationDefinition>>;
+  readonly lookDirections: readonly LookDirectionDefinition[];
 }
 
 export interface PixelRect {
@@ -163,6 +191,7 @@ function validateAnimations(
   for (const id of BASE_ANIMATION_IDS) {
     const animation = value[id];
     const path = `animations.${id}`;
+    const expected = BASE_ANIMATION_LAYOUT[id];
     if (!isRecord(animation)) {
       issues.push(`${path} must be an object`);
       continue;
@@ -173,6 +202,8 @@ function validateAnimations(
       issues.push(`${path}.row must be a non-negative integer`);
     } else if (isPositiveInteger(rows) && animation.row >= rows) {
       issues.push(`${path}.row is outside the spritesheet`);
+    } else if (animation.row !== expected.row) {
+      issues.push(`${path}.row must be ${expected.row}`);
     }
     if (typeof animation.loop !== "boolean") {
       issues.push(`${path}.loop must be a boolean`);
@@ -180,6 +211,9 @@ function validateAnimations(
     if (!Array.isArray(animation.frames) || animation.frames.length === 0) {
       issues.push(`${path}.frames must be a non-empty array`);
       continue;
+    }
+    if (animation.frames.length !== expected.frames) {
+      issues.push(`${path}.frames must contain exactly ${expected.frames} entries`);
     }
 
     const usedColumns = new Set<number>();
@@ -208,6 +242,55 @@ function validateAnimations(
   }
 }
 
+function validateLookDirections(
+  value: unknown,
+  sheet: UnknownRecord | null,
+  issues: string[],
+): void {
+  if (!Array.isArray(value) || value.length !== DIRECTION_STEPS.length) {
+    issues.push(`lookDirections must contain exactly ${DIRECTION_STEPS.length} entries`);
+    return;
+  }
+
+  const usedCells = new Set<string>();
+  value.forEach((direction, arrayIndex) => {
+    const path = `lookDirections[${arrayIndex}]`;
+    const expected = DIRECTION_STEPS[arrayIndex]!;
+    if (!isRecord(direction)) {
+      issues.push(`${path} must be an object`);
+      return;
+    }
+
+    if (direction.index !== expected.index) {
+      issues.push(`${path}.index must be ${expected.index}`);
+    }
+    if (direction.degrees !== expected.degrees) {
+      issues.push(`${path}.degrees must be ${expected.degrees}`);
+    }
+    if (direction.name !== expected.name) {
+      issues.push(`${path}.name must be ${expected.name}`);
+    }
+    validateFrameReference(direction, path, sheet, issues);
+
+    const expectedRow = arrayIndex < 8 ? 9 : 10;
+    const expectedColumn = arrayIndex % 8;
+    if (direction.row !== expectedRow) {
+      issues.push(`${path}.row must be ${expectedRow}`);
+    }
+    if (direction.column !== expectedColumn) {
+      issues.push(`${path}.column must be ${expectedColumn}`);
+    }
+
+    if (isNonNegativeInteger(direction.row) && isNonNegativeInteger(direction.column)) {
+      const cell = `${direction.row}:${direction.column}`;
+      if (usedCells.has(cell)) {
+        issues.push(`${path} reuses atlas cell ${cell}`);
+      }
+      usedCells.add(cell);
+    }
+  });
+}
+
 export function validatePetManifest(value: unknown): readonly string[] {
   const issues: string[] = [];
   if (!isRecord(value)) {
@@ -226,6 +309,7 @@ export function validatePetManifest(value: unknown): readonly string[] {
   const sheet = validateSpritesheet(value.spritesheet, issues);
   validateFrameReference(value.neutralFrame, "neutralFrame", sheet, issues);
   validateAnimations(value.animations, sheet, issues);
+  validateLookDirections(value.lookDirections, sheet, issues);
   return issues;
 }
 
@@ -292,6 +376,13 @@ export function animationFrameRect(
     throw new RangeError(`Frame ${frameIndex} does not exist in ${animationId}`);
   }
   return atlasFrameRect(manifest, { row: animation.row, column: frame.column });
+}
+
+export function lookDirectionFrameRect(
+  manifest: PetManifest,
+  direction: DirectionIndex,
+): PixelRect {
+  return atlasFrameRect(manifest, manifest.lookDirections[direction]!);
 }
 
 export function animationDurationMs(

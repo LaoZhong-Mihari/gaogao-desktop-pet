@@ -111,6 +111,11 @@ export async function showPetMenu(): Promise<void> {
   await invoke("show_pet_menu");
 }
 
+export async function setGrowthResetEnabled(enabled: boolean): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("set_growth_reset_enabled", { enabled });
+}
+
 export async function ensureFoodToken(): Promise<string> {
   return isTauriRuntime() ? invoke<string>("ensure_food_token") : "";
 }
