@@ -1,7 +1,7 @@
 {
   "name": "gaogao-desktop-pet",
   "private": true,
-  "version": "0.1.0-beta.8",
+  "version": "0.1.0-beta.9",
   "description": "糕糕——不依赖 Codex 的离线跨平台像素桌宠",
   "author": "LaoZhong-Mihari",
   "license": "MIT",
