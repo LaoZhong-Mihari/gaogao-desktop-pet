@@ -4,19 +4,21 @@ import {
   OCCASIONAL_ATTENTION_DELAY_MAX_MS,
   OCCASIONAL_ATTENTION_DELAY_MIN_MS,
   OCCASIONAL_ATTENTION_DURATION_MS,
+  ACTIVE_ATTENTION_POLL_MS,
   attentionDirectionFromGlobalPoint,
   nextOccasionalAttentionDelayMs,
 } from "../src/core/attention-behavior";
 
 describe("occasional attention behavior", () => {
-  it("schedules a bounded occasional image-frame look", () => {
+  it("schedules a bounded occasional tracking window", () => {
     expect(nextOccasionalAttentionDelayMs(0)).toBe(
       OCCASIONAL_ATTENTION_DELAY_MIN_MS,
     );
     expect(nextOccasionalAttentionDelayMs(0.999_999)).toBeGreaterThan(
       OCCASIONAL_ATTENTION_DELAY_MAX_MS - 1,
     );
-    expect(OCCASIONAL_ATTENTION_DURATION_MS).toBe(2_600);
+    expect(OCCASIONAL_ATTENTION_DURATION_MS).toBe(5_000);
+    expect(ACTIVE_ATTENTION_POLL_MS).toBe(80);
     expect(() => nextOccasionalAttentionDelayMs(1)).toThrow(RangeError);
   });
 

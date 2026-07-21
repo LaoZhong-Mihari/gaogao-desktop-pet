@@ -2,7 +2,11 @@ import { quantizeScreenDirection, type DirectionIndex } from "./direction";
 
 export const OCCASIONAL_ATTENTION_DELAY_MIN_MS = 12_000;
 export const OCCASIONAL_ATTENTION_DELAY_MAX_MS = 24_000;
-export const OCCASIONAL_ATTENTION_DURATION_MS = 2_600;
+// A random glance should be long enough to read as an intentional pose rather
+// than a one-frame flicker, while still remaining an occasional action.
+export const OCCASIONAL_ATTENTION_DURATION_MS = 5_000;
+// Direction follows the cursor only while an occasional glance or file drag is active.
+export const ACTIVE_ATTENTION_POLL_MS = 80;
 
 export function nextOccasionalAttentionDelayMs(
   randomValue = Math.random(),

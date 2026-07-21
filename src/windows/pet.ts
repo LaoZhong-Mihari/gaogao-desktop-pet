@@ -2,6 +2,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   PetStateMachine,
+  ACTIVE_ATTENTION_POLL_MS,
   OCCASIONAL_ATTENTION_DURATION_MS,
   actionHoldDurationMs,
   attentionDirectionFromGlobalPoint,
@@ -113,6 +114,9 @@ class PetController {
   private animationRevision = 0;
   private ambientTimer: number | null = null;
   private occasionalAttentionTimer: number | null = null;
+  private occasionalAttentionTrackingTimer: number | null = null;
+  private occasionalAttentionRevision = 0;
+  private occasionalAttentionEndsAt = 0;
   private clickTimer: number | null = null;
   private drag: DragState | null = null;
   private roam: RoamState | null = null;
@@ -120,6 +124,7 @@ class PetController {
   private fileDragActive = false;
   private foodDropPending = false;
   private fileAttentionRevision = 0;
+  private fileAttentionTimer: number | null = null;
   private lastInteraction = Date.now();
   private lastIgnoreCursor: boolean | null = null;
 
@@ -215,6 +220,7 @@ class PetController {
   }
 
   private noteInteraction(): void {
+    this.stopOccasionalAttentionTracking();
     this.lastInteraction = Date.now();
   }
 
@@ -393,7 +399,10 @@ class PetController {
         await saveSettings(this.settings);
       }
     }
-    if (!next.attentionEnabled) this.stateMachine.clearIntent("attention");
+    if (!next.attentionEnabled) {
+      this.stopOccasionalAttentionTracking();
+      this.stopFileAttention();
+    }
     if (!next.autoRoam) this.stopRoaming();
   }
 
@@ -401,6 +410,8 @@ class PetController {
     this.paused = paused;
     this.canvas.classList.toggle("is-paused", paused);
     if (paused) {
+      this.stopOccasionalAttentionTracking();
+      this.stopFileAttention();
       this.stopRoaming();
       this.stateMachine.resetTransientIntents();
       this.stateMachine.setIdlePose({ kind: "animation", animation: "idle" });
@@ -436,13 +447,66 @@ class PetController {
 
   private async runOccasionalAttention(): Promise<void> {
     if (!this.canRunOccasionalAttention()) return;
+    this.stopOccasionalAttentionTracking();
+    const revision = this.occasionalAttentionRevision;
+    this.occasionalAttentionEndsAt = Date.now() + OCCASIONAL_ATTENTION_DURATION_MS;
+    await this.updateOccasionalAttention(revision);
+  }
+
+  private canMaintainOccasionalAttention(): boolean {
+    return (
+      !this.paused &&
+      this.settings.attentionEnabled &&
+      this.roam === null &&
+      this.drag === null &&
+      !this.fileDragActive &&
+      (this.stateMachine.current.source === "idle" ||
+        this.stateMachine.current.source === "attention")
+    );
+  }
+
+  private stopOccasionalAttentionTracking(): void {
+    this.occasionalAttentionRevision += 1;
+    this.occasionalAttentionEndsAt = 0;
+    if (this.occasionalAttentionTrackingTimer !== null) {
+      window.clearTimeout(this.occasionalAttentionTrackingTimer);
+      this.occasionalAttentionTrackingTimer = null;
+    }
+    if (!this.fileDragActive) this.stateMachine.clearIntent("attention");
+  }
+
+  private scheduleOccasionalAttentionUpdate(revision: number): void {
+    const remaining = this.occasionalAttentionEndsAt - Date.now();
+    if (revision !== this.occasionalAttentionRevision) return;
+    if (remaining <= 0 || !this.canMaintainOccasionalAttention()) {
+      this.stopOccasionalAttentionTracking();
+      return;
+    }
+    this.occasionalAttentionTrackingTimer = window.setTimeout(() => {
+      this.occasionalAttentionTrackingTimer = null;
+      void this.updateOccasionalAttention(revision);
+    }, Math.min(ACTIVE_ATTENTION_POLL_MS, remaining));
+  }
+
+  private async updateOccasionalAttention(revision: number): Promise<void> {
+    if (revision !== this.occasionalAttentionRevision) return;
+    if (
+      Date.now() >= this.occasionalAttentionEndsAt ||
+      !this.canMaintainOccasionalAttention()
+    ) {
+      this.stopOccasionalAttentionTracking();
+      return;
+    }
     const [cursor, geometry] = await Promise.all([
       getCursorPosition(),
       getWindowGeometry("pet"),
     ]);
+    if (revision !== this.occasionalAttentionRevision) return;
     if (
-      !this.canRunOccasionalAttention()
+      Date.now() >= this.occasionalAttentionEndsAt ||
+      !this.canMaintainOccasionalAttention()
     ) {
+      this.stopOccasionalAttentionTracking();
       return;
     }
     const direction = attentionDirectionFromGlobalPoint(
@@ -450,45 +514,76 @@ class PetController {
       geometry,
       24 * geometry.scaleFactor,
     );
-    if (direction === null) return;
-    this.stateMachine.setIntent(
-      "attention",
-      { kind: "look", direction },
-      OCCASIONAL_ATTENTION_DURATION_MS,
-    );
+    if (direction === null) {
+      this.stateMachine.clearIntent("attention");
+    } else {
+      this.stateMachine.setIntent("attention", { kind: "look", direction });
+    }
+    this.scheduleOccasionalAttentionUpdate(revision);
   }
 
   private async wireFileDragEvents(): Promise<void> {
     if (!runtimeAvailable()) return;
     await getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type === "enter") {
-        this.fileDragActive = true;
-        this.fileAttentionRevision += 1;
-        this.stopRoaming();
-        void this.setCursorPassthrough(false);
-        void this.noticeDraggedFile(this.fileAttentionRevision);
+        if (!this.fileDragActive) this.startFileAttention();
         return;
       }
       if (payload.type === "over") {
-        this.fileDragActive = true;
-        this.fileAttentionRevision += 1;
-        void this.noticeDraggedFile(this.fileAttentionRevision);
+        // Some platforms can deliver an over event without a preceding enter.
+        if (!this.fileDragActive) this.startFileAttention();
         return;
       }
       if (payload.type === "drop") {
-        this.fileDragActive = false;
-        this.fileAttentionRevision += 1;
-        this.stateMachine.clearIntent("attention");
+        this.stopFileAttention();
         void this.handleFileDrop(payload.paths);
         return;
       }
-      this.fileDragActive = false;
-      this.fileAttentionRevision += 1;
-      this.stateMachine.clearIntent("attention");
+      this.stopFileAttention();
     });
   }
 
-  private async noticeDraggedFile(revision: number): Promise<void> {
+  /** Starts continuous file-drag tracking independently of the random look window. */
+  private startFileAttention(): void {
+    this.stopOccasionalAttentionTracking();
+    this.fileDragActive = true;
+    this.fileAttentionRevision += 1;
+    this.stopRoaming();
+    void this.setCursorPassthrough(false);
+    void this.updateFileAttention(this.fileAttentionRevision);
+  }
+
+  /** Invalidates in-flight reads and immediately restores normal state selection. */
+  private stopFileAttention(): void {
+    this.fileDragActive = false;
+    this.stopFileAttentionPolling();
+    this.stateMachine.clearIntent("attention");
+  }
+
+  private stopFileAttentionPolling(): void {
+    this.fileAttentionRevision += 1;
+    if (this.fileAttentionTimer !== null) {
+      window.clearTimeout(this.fileAttentionTimer);
+      this.fileAttentionTimer = null;
+    }
+  }
+
+  private scheduleFileAttentionUpdate(revision: number): void {
+    if (
+      revision !== this.fileAttentionRevision ||
+      !this.fileDragActive ||
+      this.paused ||
+      !this.settings.attentionEnabled
+    ) {
+      return;
+    }
+    this.fileAttentionTimer = window.setTimeout(() => {
+      this.fileAttentionTimer = null;
+      void this.updateFileAttention(revision);
+    }, ACTIVE_ATTENTION_POLL_MS);
+  }
+
+  private async updateFileAttention(revision: number): Promise<void> {
     if (this.paused || !this.settings.attentionEnabled) return;
     const [cursor, geometry] = await Promise.all([
       getCursorPosition(),
@@ -509,9 +604,10 @@ class PetController {
     );
     if (direction === null) {
       this.stateMachine.clearIntent("attention");
-      return;
+    } else {
+      this.stateMachine.setIntent("attention", { kind: "look", direction });
     }
-    this.stateMachine.setIntent("attention", { kind: "look", direction });
+    this.scheduleFileAttentionUpdate(revision);
   }
 
   private async handleFileDrop(paths: readonly string[]): Promise<void> {
@@ -590,6 +686,7 @@ class PetController {
 
   private async startRoaming(): Promise<void> {
     if (this.roam !== null) return;
+    this.stopOccasionalAttentionTracking();
     const plan = createRoamPlan();
     const now = performance.now();
     this.stateMachine.setIntent("roam", {

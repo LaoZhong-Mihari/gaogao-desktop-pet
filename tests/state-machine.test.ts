@@ -121,4 +121,16 @@ describe("PetStateMachine", () => {
     expect(machine.current.pose).toEqual({ kind: "look", direction: 5 });
     expect(listener).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps a drag attention pose active through direction updates until cleared", () => {
+    const machine = new PetStateMachine();
+    machine.setIntent("attention", { kind: "look", direction: 2 });
+    machine.setIntent("attention", { kind: "look", direction: 10 });
+    expect(machine.current).toEqual({
+      source: "attention",
+      pose: { kind: "look", direction: 10 },
+    });
+    machine.clearIntent("attention");
+    expect(machine.current.source).toBe("idle");
+  });
 });
