@@ -31,6 +31,12 @@ export interface ScreenRect extends ScreenPoint {
   readonly height: number;
 }
 
+export interface AttentionDirectionOptions {
+  /** Unit coordinates inside the pet window, normally centered on the face. */
+  readonly anchorRatio?: ScreenPoint;
+  readonly deadZonePx?: number;
+}
+
 function assertPositiveSize(size: Pick<ScreenRect, "width" | "height">): void {
   if (
     !Number.isFinite(size.width) ||
@@ -42,16 +48,40 @@ function assertPositiveSize(size: Pick<ScreenRect, "width" | "height">): void {
   }
 }
 
-/** Quantizes one global cursor snapshot relative to the pet window center. */
+function attentionAnchorPoint(
+  windowBounds: ScreenRect,
+  anchorRatio: ScreenPoint,
+): ScreenPoint {
+  if (
+    !Number.isFinite(anchorRatio.x) ||
+    !Number.isFinite(anchorRatio.y) ||
+    anchorRatio.x < 0 ||
+    anchorRatio.x > 1 ||
+    anchorRatio.y < 0 ||
+    anchorRatio.y > 1
+  ) {
+    throw new RangeError("attention anchor ratio must stay inside the window");
+  }
+  return {
+    x: windowBounds.x + windowBounds.width * anchorRatio.x,
+    y: windowBounds.y + windowBounds.height * anchorRatio.y,
+  };
+}
+
+/** Quantizes one global cursor snapshot relative to Gaogao's face anchor. */
 export function attentionDirectionFromGlobalPoint(
   point: ScreenPoint,
   windowBounds: ScreenRect,
-  deadZonePx = 0,
+  options: AttentionDirectionOptions = {},
 ): DirectionIndex | null {
   assertPositiveSize(windowBounds);
+  const anchor = attentionAnchorPoint(
+    windowBounds,
+    options.anchorRatio ?? { x: 0.5, y: 0.5 },
+  );
   return quantizeScreenDirection(
-    point.x - (windowBounds.x + windowBounds.width / 2),
-    point.y - (windowBounds.y + windowBounds.height / 2),
-    deadZonePx,
+    point.x - anchor.x,
+    point.y - anchor.y,
+    options.deadZonePx ?? 0,
   );
 }

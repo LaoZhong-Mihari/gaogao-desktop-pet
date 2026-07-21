@@ -7,6 +7,10 @@ export interface Point {
   y: number;
 }
 
+export interface GlobalPointerState extends Point {
+  primaryButtonPressed: boolean;
+}
+
 export interface Rect extends Point {
   width: number;
   height: number;
@@ -22,15 +26,60 @@ export interface WindowGeometry extends Rect {
   workArea?: MonitorWorkArea | null;
 }
 
+export interface PetDragUpdate {
+  totalDeltaX: number;
+  totalDeltaY: number;
+  movementX: number;
+  moved: boolean;
+  geometry: WindowGeometry;
+}
+
+export interface PetDragEnd {
+  moved: boolean;
+  geometry: WindowGeometry;
+}
+
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-export async function getCursorPosition(): Promise<Point> {
+export async function getGlobalPointerState(): Promise<GlobalPointerState> {
   if (!isTauriRuntime()) {
-    return { x: window.screenX, y: window.screenY };
+    return {
+      x: window.screenX,
+      y: window.screenY,
+      primaryButtonPressed: false,
+    };
   }
-  return invoke<Point>("get_cursor_position");
+  return invoke<GlobalPointerState>("get_global_pointer_state");
+}
+
+export async function beginPetDrag(pointerId: number): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("begin_pet_drag", { pointerId });
+}
+
+export async function updatePetDrag(
+  pointerId: number,
+  threshold: number,
+): Promise<PetDragUpdate> {
+  if (!isTauriRuntime()) {
+    return {
+      totalDeltaX: 0,
+      totalDeltaY: 0,
+      movementX: 0,
+      moved: false,
+      geometry: await getWindowGeometry("pet"),
+    };
+  }
+  return invoke<PetDragUpdate>("update_pet_drag", { pointerId, threshold });
+}
+
+export async function endPetDrag(pointerId: number): Promise<PetDragEnd> {
+  if (!isTauriRuntime()) {
+    return { moved: false, geometry: await getWindowGeometry("pet") };
+  }
+  return invoke<PetDragEnd>("end_pet_drag", { pointerId });
 }
 
 export async function getWindowGeometry(label: WindowLabel): Promise<WindowGeometry> {

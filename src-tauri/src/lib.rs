@@ -3,7 +3,10 @@ use std::{
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
 };
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem},
@@ -41,6 +44,7 @@ struct NativeState {
     paused: AtomicBool,
     always_on_top: AtomicBool,
     launch_at_login: AtomicBool,
+    pet_drag: Mutex<Option<PetDragSession>>,
     tray_toggle_pet: MenuItem<Wry>,
     tray_pause: MenuItem<Wry>,
     tray_reset_growth: MenuItem<Wry>,
@@ -54,11 +58,123 @@ struct NativeState {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CursorPosition {
-    /// Desktop-relative physical pixels.
+struct GlobalPointerState {
+    /// Desktop coordinates expressed in the caller window's physical scale.
     x: f64,
-    /// Desktop-relative physical pixels.
     y: f64,
+    primary_button_pressed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DragPoint {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug)]
+struct PetDragSession {
+    pointer_id: i64,
+    start_cursor: DragPoint,
+    start_window: DragPoint,
+    last_cursor: DragPoint,
+    moved: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PetDragMotion {
+    target: DragPoint,
+    total_delta_x: f64,
+    total_delta_y: f64,
+    movement_x: f64,
+    moved: bool,
+}
+
+impl PetDragSession {
+    fn new(pointer_id: i64, cursor: DragPoint, window: DragPoint) -> Self {
+        Self {
+            pointer_id,
+            start_cursor: cursor,
+            start_window: window,
+            last_cursor: cursor,
+            moved: false,
+        }
+    }
+
+    fn advance(&mut self, cursor: DragPoint, threshold: f64) -> PetDragMotion {
+        let total_delta_x = cursor.x - self.start_cursor.x;
+        let total_delta_y = cursor.y - self.start_cursor.y;
+        let movement_x = cursor.x - self.last_cursor.x;
+        self.moved = self.moved || total_delta_x.hypot(total_delta_y) >= threshold;
+        self.last_cursor = cursor;
+        PetDragMotion {
+            target: DragPoint {
+                x: self.start_window.x + total_delta_x,
+                y: self.start_window.y + total_delta_y,
+            },
+            total_delta_x,
+            total_delta_y,
+            movement_x,
+            moved: self.moved,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetDragUpdate {
+    total_delta_x: f64,
+    total_delta_y: f64,
+    movement_x: f64,
+    moved: bool,
+    geometry: WindowGeometry,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetDragEnd {
+    moved: bool,
+    geometry: WindowGeometry,
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceButtonState(state_id: i32, button: u32) -> bool;
+}
+
+#[cfg(target_os = "macos")]
+fn primary_pointer_button_pressed() -> bool {
+    const COMBINED_SESSION_STATE: i32 = 0;
+    const LEFT_MOUSE_BUTTON: u32 = 0;
+    // SAFETY: CoreGraphics exposes this process-independent read-only query on
+    // every supported macOS version and accepts the constants above.
+    unsafe { CGEventSourceButtonState(COMBINED_SESSION_STATE, LEFT_MOUSE_BUTTON) }
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn GetAsyncKeyState(virtual_key: i32) -> i16;
+    fn GetSystemMetrics(index: i32) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+fn primary_pointer_button_pressed() -> bool {
+    const SM_SWAPBUTTON: i32 = 23;
+    const VK_LBUTTON: i32 = 0x01;
+    const VK_RBUTTON: i32 = 0x02;
+    // SAFETY: Both user32 calls are read-only process-independent queries.
+    let primary_key = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } == 0 {
+        VK_LBUTTON
+    } else {
+        VK_RBUTTON
+    };
+    (unsafe { GetAsyncKeyState(primary_key) } as u16 & 0x8000) != 0
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn primary_pointer_button_pressed() -> bool {
+    false
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +324,96 @@ fn geometry_for(window: &WebviewWindow) -> Result<WindowGeometry, String> {
         monitor_name,
         work_area,
     })
+}
+
+fn cursor_position_for_window(
+    app: &AppHandle,
+    window: &WebviewWindow,
+) -> Result<tauri::PhysicalPosition<f64>, String> {
+    let mut position = app.cursor_position().map_err(command_error)?;
+
+    // Tao reports the macOS global cursor using the primary monitor's scale,
+    // while a window position uses the scale of the monitor containing that
+    // window. Convert the cursor into that same coordinate basis so mixed-DPI
+    // and negative-coordinate displays still produce the correct gaze vector.
+    #[cfg(target_os = "macos")]
+    {
+        let primary_scale = app
+            .primary_monitor()
+            .map_err(command_error)?
+            .map(|monitor| monitor.scale_factor())
+            .unwrap_or(1.0);
+        let window_scale = window.scale_factor().map_err(command_error)?;
+        if primary_scale.is_finite() && primary_scale > 0.0 {
+            let ratio = window_scale / primary_scale;
+            position.x *= ratio;
+            position.y *= ratio;
+        }
+    }
+
+    Ok(position)
+}
+
+fn logical_drag_point(x: f64, y: f64, scale: f64) -> Result<DragPoint, String> {
+    if !x.is_finite() || !y.is_finite() {
+        return Err("pet drag coordinates must be finite".to_owned());
+    }
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("pet drag scale must be finite and positive".to_owned());
+    }
+    Ok(DragPoint {
+        x: x / scale,
+        y: y / scale,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn pet_drag_cursor_position(app: &AppHandle) -> Result<DragPoint, String> {
+    let position = app.cursor_position().map_err(command_error)?;
+    let primary_scale = app
+        .primary_monitor()
+        .map_err(command_error)?
+        .map(|monitor| monitor.scale_factor())
+        .unwrap_or(1.0);
+    logical_drag_point(position.x, position.y, primary_scale)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pet_drag_cursor_position(app: &AppHandle) -> Result<DragPoint, String> {
+    let position = app.cursor_position().map_err(command_error)?;
+    logical_drag_point(position.x, position.y, 1.0)
+}
+
+#[cfg(target_os = "macos")]
+fn pet_drag_window_position(window: &WebviewWindow) -> Result<DragPoint, String> {
+    let position = window.outer_position().map_err(command_error)?;
+    let scale = window.scale_factor().map_err(command_error)?;
+    logical_drag_point(position.x as f64, position.y as f64, scale)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pet_drag_window_position(window: &WebviewWindow) -> Result<DragPoint, String> {
+    let position = window.outer_position().map_err(command_error)?;
+    logical_drag_point(position.x as f64, position.y as f64, 1.0)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_pet_drag_position(window: &WebviewWindow, point: DragPoint) -> Result<(), String> {
+    if !point.x.is_finite() || !point.y.is_finite() {
+        return Err("pet drag target must be finite".to_owned());
+    }
+    window
+        .set_position(tauri::LogicalPosition::new(point.x, point.y))
+        .map_err(command_error)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_pet_drag_position(window: &WebviewWindow, point: DragPoint) -> Result<(), String> {
+    let x = checked_coordinate(point.x, "x")?;
+    let y = checked_coordinate(point.y, "y")?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(command_error)
 }
 
 fn checked_dimension(value: f64, name: &str) -> Result<u32, String> {
@@ -424,6 +630,7 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
         paused: AtomicBool::new(false),
         always_on_top: AtomicBool::new(true),
         launch_at_login: AtomicBool::new(launch_at_login),
+        pet_drag: Mutex::new(None),
         tray_toggle_pet,
         tray_pause,
         tray_reset_growth,
@@ -439,11 +646,103 @@ fn install_menus_and_tray(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-fn get_cursor_position(app: AppHandle) -> Result<CursorPosition, String> {
-    let position = app.cursor_position().map_err(command_error)?;
-    Ok(CursorPosition {
+fn get_global_pointer_state(
+    app: AppHandle,
+    window: WebviewWindow,
+    label: Option<String>,
+) -> Result<GlobalPointerState, String> {
+    let target = resolve_window(&app, &window, label.as_deref())?;
+    let position = cursor_position_for_window(&app, &target)?;
+    Ok(GlobalPointerState {
         x: position.x,
         y: position.y,
+        primary_button_pressed: primary_pointer_button_pressed(),
+    })
+}
+
+#[tauri::command]
+fn begin_pet_drag(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<NativeState>,
+    pointer_id: i64,
+) -> Result<(), String> {
+    let target = resolve_window(&app, &window, Some(PET_WINDOW))?;
+    let cursor = pet_drag_cursor_position(&app)?;
+    let window_position = pet_drag_window_position(&target)?;
+    let mut active = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "pet drag state is unavailable".to_owned())?;
+    *active = Some(PetDragSession::new(pointer_id, cursor, window_position));
+    Ok(())
+}
+
+#[tauri::command]
+fn update_pet_drag(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<NativeState>,
+    pointer_id: i64,
+    threshold: f64,
+) -> Result<PetDragUpdate, String> {
+    if !threshold.is_finite() || threshold < 0.0 {
+        return Err("pet drag threshold must be finite and non-negative".to_owned());
+    }
+    let target = resolve_window(&app, &window, Some(PET_WINDOW))?;
+    let (motion, geometry) = {
+        let mut active = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "pet drag state is unavailable".to_owned())?;
+        let session = active
+            .as_mut()
+            .ok_or_else(|| "pet drag is not active".to_owned())?;
+        if session.pointer_id != pointer_id {
+            return Err("pet drag pointer does not match the active session".to_owned());
+        }
+        let cursor = pet_drag_cursor_position(&app)?;
+        let motion = session.advance(cursor, threshold);
+        if motion.moved {
+            apply_pet_drag_position(&target, motion.target)?;
+        }
+        (motion, geometry_for(&target)?)
+    };
+    Ok(PetDragUpdate {
+        total_delta_x: motion.total_delta_x,
+        total_delta_y: motion.total_delta_y,
+        movement_x: motion.movement_x,
+        moved: motion.moved,
+        geometry,
+    })
+}
+
+#[tauri::command]
+fn end_pet_drag(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<NativeState>,
+    pointer_id: i64,
+) -> Result<PetDragEnd, String> {
+    let target = resolve_window(&app, &window, Some(PET_WINDOW))?;
+    let mut active = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "pet drag state is unavailable".to_owned())?;
+    let moved = active
+        .as_ref()
+        .filter(|session| session.pointer_id == pointer_id)
+        .is_some_and(|session| session.moved);
+    if active
+        .as_ref()
+        .is_some_and(|session| session.pointer_id == pointer_id)
+    {
+        *active = None;
+    }
+    drop(active);
+    Ok(PetDragEnd {
+        moved,
+        geometry: geometry_for(&target)?,
     })
 }
 
@@ -659,7 +958,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            get_cursor_position,
+            get_global_pointer_state,
+            begin_pet_drag,
+            update_pet_drag,
+            end_pet_drag,
             get_window_geometry,
             move_window,
             resize_window,
@@ -769,5 +1071,91 @@ mod tests {
             b"user-owned contents"
         );
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn normalizes_drag_points_before_combining_cursor_and_window_positions() {
+        assert_eq!(
+            logical_drag_point(4_100.0, 1_600.0, 2.0).expect("primary-display cursor"),
+            DragPoint {
+                x: 2_050.0,
+                y: 800.0,
+            }
+        );
+        assert_eq!(
+            logical_drag_point(2_000.0, 700.0, 1.0).expect("external-display window"),
+            DragPoint {
+                x: 2_000.0,
+                y: 700.0,
+            }
+        );
+        assert!(logical_drag_point(0.0, 0.0, 0.0).is_err());
+    }
+
+    #[test]
+    fn pet_drag_motion_uses_one_stable_coordinate_space() {
+        let mut session = PetDragSession::new(
+            7,
+            DragPoint {
+                x: 2_050.0,
+                y: 800.0,
+            },
+            DragPoint {
+                x: 2_000.0,
+                y: 700.0,
+            },
+        );
+        let first = session.advance(
+            DragPoint {
+                x: 2_060.0,
+                y: 806.0,
+            },
+            5.0,
+        );
+        assert_eq!(first.total_delta_x, 10.0);
+        assert_eq!(first.total_delta_y, 6.0);
+        assert_eq!(first.movement_x, 10.0);
+        assert!(first.moved);
+        assert_eq!(
+            first.target,
+            DragPoint {
+                x: 2_010.0,
+                y: 706.0,
+            }
+        );
+
+        let second = session.advance(
+            DragPoint {
+                x: 2_057.0,
+                y: 810.0,
+            },
+            5.0,
+        );
+        assert_eq!(second.total_delta_x, 7.0);
+        assert_eq!(second.total_delta_y, 10.0);
+        assert_eq!(second.movement_x, -3.0);
+        assert!(second.moved);
+        assert_eq!(
+            second.target,
+            DragPoint {
+                x: 2_007.0,
+                y: 710.0,
+            }
+        );
+    }
+
+    #[test]
+    fn pet_drag_does_not_move_the_window_before_the_threshold() {
+        let mut session = PetDragSession::new(
+            3,
+            DragPoint { x: 100.0, y: 200.0 },
+            DragPoint { x: 400.0, y: 500.0 },
+        );
+        let jitter = session.advance(DragPoint { x: 103.0, y: 204.0 }, 6.0);
+        assert!(!jitter.moved);
+        let started = session.advance(DragPoint { x: 106.0, y: 200.0 }, 6.0);
+        assert!(started.moved);
+        let continued = session.advance(DragPoint { x: 104.0, y: 200.0 }, 6.0);
+        assert!(continued.moved);
     }
 }

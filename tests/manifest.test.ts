@@ -30,6 +30,7 @@ describe("pet manifest", () => {
     expect(Object.keys(manifest.animations)).toHaveLength(10);
     expect(manifest.lookDirections).toHaveLength(16);
     expect(manifest.neutralFrame).toEqual({ row: 0, column: 0 });
+    expect(manifest.attentionAnchor).toEqual({ x: 52, y: 160 });
   });
 
   it("maps all ten base actions to their fixed rows and frame counts", () => {
@@ -88,6 +89,20 @@ describe("pet manifest", () => {
     expect(issues).toContain("spritesheet.width must equal columns * frameWidth");
     expect(issues).toContain("spritesheet.src must be a bundled local asset path");
     expect(() => parsePetManifest(invalid)).toThrow(ManifestValidationError);
+  });
+
+  it("requires a face-centered attention anchor inside the atlas cell", () => {
+    const missing = copyManifest();
+    delete missing.attentionAnchor;
+    expect(validatePetManifest(missing)).toContain(
+      "attentionAnchor must be an object",
+    );
+
+    const outside = copyManifest();
+    outside.attentionAnchor.x = 192;
+    expect(validatePetManifest(outside)).toContain(
+      "attentionAnchor.x must stay inside the frame",
+    );
   });
 
   it("rejects missing animations and duplicate animation frames", () => {

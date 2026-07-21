@@ -47,8 +47,9 @@ Get-FileHash .\*.exe -Algorithm SHA256
 - 双击糕糕：跳跃。
 - 右键糕糕：打开快捷菜单，可直接触发“颓废舔毛”。
 - 偶尔注视：空闲时会随机触发约 5 秒注视；触发期间糕糕会持续看向当前鼠标方向，结束后停止跟随。没有触发时不会常驻追踪鼠标。
-- 拖动文件靠近：文件进入糕糕窗口后，糕糕会持续跟随当前拖动位置，直到文件离开或放下。
-- 注视素材：16 个头颈方向均由图像模型按同一像素风绘制，再对齐到完全不动的待机身体；不使用脚本绘制表情、瞳孔或五官。
+- 拖动文件靠近：从桌面或文件管理器拿起文件并开始移动时，糕糕会在文件尚未进入自身窗口前就持续看向当前鼠标；松开后停止。
+- 注视定位：16 个方向以糕糕面部而不是透明窗口中心为原点，多显示器缩放下也会换算到糕糕所在屏幕的坐标基准。
+- 注视素材：16 个方向均由图像模型按同一像素风完整绘制头、短颈、肩和前胸，再与固定底盘注册；不使用脚本绘制表情、瞳孔或五官。
 - 喂猫条：首次启动会在桌面放置“糕糕的猫条（拖给糕糕）.png”。把它拖进糕糕窗口，验证成功后糕糕会直接长大 2–5%，累计最多 50%；猫条可以重复使用。需要恢复时，可从糕糕右键菜单或托盘选择“恢复原大小”，只清除喂食增量，不改变设置中的基础尺寸。
 - 放着不管：糕糕会随机发呆、忙碌或连续颓废舔毛；空闲约 45 秒后也可能从当前位置开始左右散步。
 - 待机节奏：使用 Codex Pet 实际运行时的 6× 慢速节奏，一轮约 6.6 秒。
@@ -121,11 +122,11 @@ npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
 推送 `v*` 标签会触发 GitHub Actions，在 macOS 与 Windows runner 上构建原生安装包，并创建 prerelease：
 
 ```bash
-git tag v0.1.0-beta.7
-git push origin v0.1.0-beta.7
+git tag v0.1.0-beta.8
+git push origin v0.1.0-beta.8
 ```
 
-发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.7` 对应标签 `v0.1.0-beta.7`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
+发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.8` 对应标签 `v0.1.0-beta.8`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
 
 ## 许可
 

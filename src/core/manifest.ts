@@ -73,6 +73,8 @@ export interface PetManifest {
   readonly description: string;
   readonly spritesheet: SpritesheetDefinition;
   readonly neutralFrame: AtlasFrameReference;
+  /** Logical atlas-cell coordinate used as the origin for cursor gaze. */
+  readonly attentionAnchor: { readonly x: number; readonly y: number };
   readonly animations: Readonly<Record<BaseAnimationId, AnimationDefinition>>;
   readonly lookDirections: readonly LookDirectionDefinition[];
 }
@@ -176,6 +178,30 @@ function validateSpritesheet(value: unknown, issues: string[]): UnknownRecord | 
   }
 
   return value;
+}
+
+function validateAttentionAnchor(
+  value: unknown,
+  sheet: UnknownRecord | null,
+  issues: string[],
+): void {
+  if (!isRecord(value)) {
+    issues.push("attentionAnchor must be an object");
+    return;
+  }
+  const frameWidth = sheet?.frameWidth;
+  const frameHeight = sheet?.frameHeight;
+  for (const [axis, limit] of [
+    ["x", frameWidth],
+    ["y", frameHeight],
+  ] as const) {
+    const coordinate = value[axis];
+    if (!Number.isFinite(coordinate) || (coordinate as number) < 0) {
+      issues.push(`attentionAnchor.${axis} must be a finite non-negative number`);
+    } else if (isPositiveInteger(limit) && (coordinate as number) >= limit) {
+      issues.push(`attentionAnchor.${axis} must stay inside the frame`);
+    }
+  }
 }
 
 function validateAnimations(
@@ -308,6 +334,7 @@ export function validatePetManifest(value: unknown): readonly string[] {
 
   const sheet = validateSpritesheet(value.spritesheet, issues);
   validateFrameReference(value.neutralFrame, "neutralFrame", sheet, issues);
+  validateAttentionAnchor(value.attentionAnchor, sheet, issues);
   validateAnimations(value.animations, sheet, issues);
   validateLookDirections(value.lookDirections, sheet, issues);
   return issues;

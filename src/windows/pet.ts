@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   PetStateMachine,
   ACTIVE_ATTENTION_POLL_MS,
+  EMPTY_GLOBAL_POINTER_DRAG_STATE,
   OCCASIONAL_ATTENTION_DURATION_MS,
   actionHoldDurationMs,
   attentionDirectionFromGlobalPoint,
@@ -15,12 +16,16 @@ import {
   lookDirectionFrameRect,
   nextOccasionalAttentionDelayMs,
   pickAmbientAnimation,
+  resetGlobalPointerDrag,
   stepHorizontalRoam,
+  shouldTrackExternalDragAttention,
+  updateGlobalPointerDrag,
   updateSettings,
   type ActivePetState,
   type AlphaMask,
   type BaseAnimationId,
   type HorizontalDirection,
+  type GlobalPointerDragState,
   type PetManifest,
   type PetSettings,
   type PixelRect,
@@ -35,7 +40,9 @@ import {
 } from "../core/feeding";
 import { loadSettings, saveSettings } from "../app/store";
 import {
-  getCursorPosition,
+  beginPetDrag,
+  endPetDrag,
+  getGlobalPointerState,
   getWindowGeometry,
   moveWindow,
   resizeWindow,
@@ -47,7 +54,9 @@ import {
   setGrowthResetEnabled,
   showPetMenu,
   showSettings,
+  updatePetDrag,
   validateFoodToken,
+  type GlobalPointerState,
   type WindowGeometry,
 } from "../app/native";
 
@@ -56,6 +65,8 @@ const FRAME_HEIGHT = 208;
 const DRAG_THRESHOLD_PX = 5;
 const DOUBLE_CLICK_MS = 260;
 const HIT_TEST_MS = 45;
+const GLOBAL_POINTER_DRAG_POLL_MS = 50;
+const GLOBAL_POINTER_DRAG_THRESHOLD_PX = 6;
 const ROAM_IDLE_MS = 45_000;
 const ROAM_TICK_MS = 50;
 const ROAM_SPEED_LOGICAL_PX_PER_SECOND = 28;
@@ -63,12 +74,7 @@ const WINDOW_MARGIN_LOGICAL_PX = 12;
 
 interface DragState {
   pointerId: number;
-  startCursorX: number;
-  startCursorY: number;
-  startWindowX: number;
-  startWindowY: number;
   moved: boolean;
-  lastCursorX: number;
 }
 
 interface RoamState {
@@ -119,9 +125,16 @@ class PetController {
   private occasionalAttentionEndsAt = 0;
   private clickTimer: number | null = null;
   private drag: DragState | null = null;
+  private petPointerInteractionPending = false;
+  private pendingPointerId: number | null = null;
   private roam: RoamState | null = null;
   private paused = false;
   private fileDragActive = false;
+  private windowDropHoverActive = false;
+  private globalPointerDragActive = false;
+  private globalPointerDragState: GlobalPointerDragState =
+    EMPTY_GLOBAL_POINTER_DRAG_STATE;
+  private globalPointerPollBusy = false;
   private foodDropPending = false;
   private fileAttentionRevision = 0;
   private fileAttentionTimer: number | null = null;
@@ -153,6 +166,7 @@ class PetController {
     this.wirePointerEvents();
     await this.wireApplicationEvents();
     await this.wireFileDragEvents();
+    this.startGlobalPointerDragWatcher();
     await this.applySettings(this.settings, true);
     await this.restorePosition();
     this.renderState(this.stateMachine.current);
@@ -244,58 +258,82 @@ class PetController {
 
   private async pointerDown(event: PointerEvent): Promise<void> {
     if (event.button !== 0 || this.paused) return;
+    this.petPointerInteractionPending = true;
+    this.pendingPointerId = event.pointerId;
     event.preventDefault();
+    this.canvas.setPointerCapture(event.pointerId);
     this.noteInteraction();
     this.stopRoaming();
     this.stateMachine.clearIntent("attention");
-    await this.setCursorPassthrough(false);
-    const [cursor, geometry] = await Promise.all([
-      getCursorPosition(),
-      getWindowGeometry("pet"),
-    ]);
-    this.drag = {
-      pointerId: event.pointerId,
-      startCursorX: cursor.x,
-      startCursorY: cursor.y,
-      startWindowX: geometry.x,
-      startWindowY: geometry.y,
-      moved: false,
-      lastCursorX: cursor.x,
-    };
-    this.canvas.setPointerCapture(event.pointerId);
+    try {
+      await this.setCursorPassthrough(false);
+      await beginPetDrag(event.pointerId);
+      if (this.pendingPointerId !== event.pointerId) {
+        await endPetDrag(event.pointerId).catch(() => undefined);
+        return;
+      }
+      this.drag = {
+        pointerId: event.pointerId,
+        moved: false,
+      };
+    } catch {
+      await endPetDrag(event.pointerId).catch(() => undefined);
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+    } finally {
+      if (this.pendingPointerId === event.pointerId) {
+        this.pendingPointerId = null;
+        this.petPointerInteractionPending = false;
+      }
+    }
   }
 
   private async pointerMove(): Promise<void> {
     const drag = this.drag;
     if (drag === null) return;
-    const cursor = await getCursorPosition();
-    const dx = cursor.x - drag.startCursorX;
-    const dy = cursor.y - drag.startCursorY;
-    if (!drag.moved && Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
+    const update = await updatePetDrag(drag.pointerId, DRAG_THRESHOLD_PX).catch(
+      () => null,
+    );
+    if (update === null || this.drag !== drag) return;
+    if (!drag.moved && update.moved) {
       drag.moved = true;
       this.canvas.classList.add("is-dragging");
     }
     if (!drag.moved) return;
-    const horizontal = cursor.x - drag.lastCursorX;
-    drag.lastCursorX = cursor.x;
     this.stateMachine.setIntent("direct", {
       kind: "animation",
-      animation: horizontal < 0 ? "running-left" : "running-right",
+      animation: update.movementX < 0 ? "running-left" : "running-right",
     });
-    await moveWindow("pet", drag.startWindowX + dx, drag.startWindowY + dy);
   }
 
   private async pointerUp(event: PointerEvent): Promise<void> {
     const drag = this.drag;
-    if (drag === null || drag.pointerId !== event.pointerId) return;
+    if (drag === null) {
+      if (this.pendingPointerId === event.pointerId) {
+        this.pendingPointerId = null;
+        this.petPointerInteractionPending = false;
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        await endPetDrag(event.pointerId).catch(() => undefined);
+        this.queueClick();
+      }
+      return;
+    }
+    if (drag.pointerId !== event.pointerId) return;
     this.drag = null;
     this.canvas.classList.remove("is-dragging");
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
     }
     this.stateMachine.clearIntent("direct");
-    if (drag.moved) {
-      const geometry = await getWindowGeometry("pet");
+    const ended = await endPetDrag(event.pointerId).catch(async () => ({
+      moved: drag.moved,
+      geometry: await getWindowGeometry("pet"),
+    }));
+    if (drag.moved || ended.moved) {
+      const { geometry } = ended;
       this.settings = updateSettings(this.settings, {
         windowPosition: {
           x: geometry.x,
@@ -401,8 +439,8 @@ class PetController {
     }
     if (!next.attentionEnabled) {
       this.stopOccasionalAttentionTracking();
-      this.stopFileAttention();
     }
+    this.syncExternalDragAttention();
     if (!next.autoRoam) this.stopRoaming();
   }
 
@@ -411,7 +449,6 @@ class PetController {
     this.canvas.classList.toggle("is-paused", paused);
     if (paused) {
       this.stopOccasionalAttentionTracking();
-      this.stopFileAttention();
       this.stopRoaming();
       this.stateMachine.resetTransientIntents();
       this.stateMachine.setIdlePose({ kind: "animation", animation: "idle" });
@@ -421,6 +458,7 @@ class PetController {
       this.renderState(this.stateMachine.current);
       this.noteInteraction();
     }
+    this.syncExternalDragAttention();
   }
 
   private scheduleOccasionalAttention(): void {
@@ -497,10 +535,12 @@ class PetController {
       this.stopOccasionalAttentionTracking();
       return;
     }
-    const [cursor, geometry] = await Promise.all([
-      getCursorPosition(),
-      getWindowGeometry("pet"),
-    ]);
+    const snapshot = await this.readPointerGeometry();
+    if (snapshot === null) {
+      this.scheduleOccasionalAttentionUpdate(revision);
+      return;
+    }
+    const { cursor, geometry } = snapshot;
     if (revision !== this.occasionalAttentionRevision) return;
     if (
       Date.now() >= this.occasionalAttentionEndsAt ||
@@ -512,7 +552,10 @@ class PetController {
     const direction = attentionDirectionFromGlobalPoint(
       cursor,
       geometry,
-      24 * geometry.scaleFactor,
+      {
+        anchorRatio: this.attentionAnchorRatio(),
+        deadZonePx: 24 * geometry.scaleFactor,
+      },
     );
     if (direction === null) {
       this.stateMachine.clearIntent("attention");
@@ -526,21 +569,90 @@ class PetController {
     if (!runtimeAvailable()) return;
     await getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type === "enter") {
-        if (!this.fileDragActive) this.startFileAttention();
+        this.windowDropHoverActive = true;
+        this.syncExternalDragAttention();
         return;
       }
       if (payload.type === "over") {
         // Some platforms can deliver an over event without a preceding enter.
-        if (!this.fileDragActive) this.startFileAttention();
+        this.windowDropHoverActive = true;
+        this.syncExternalDragAttention();
         return;
       }
       if (payload.type === "drop") {
-        this.stopFileAttention();
+        this.windowDropHoverActive = false;
+        this.syncExternalDragAttention();
         void this.handleFileDrop(payload.paths);
         return;
       }
-      this.stopFileAttention();
+      this.windowDropHoverActive = false;
+      this.syncExternalDragAttention();
     });
+  }
+
+  private attentionAnchorRatio(): { x: number; y: number } {
+    return {
+      x: this.manifest.attentionAnchor.x / this.manifest.spritesheet.frameWidth,
+      y: this.manifest.attentionAnchor.y / this.manifest.spritesheet.frameHeight,
+    };
+  }
+
+  /**
+   * Tauri's drop event begins only after a file enters this window. Polling the
+   * native primary button lets Gaogao notice the desktop drag beforehand.
+   */
+  private startGlobalPointerDragWatcher(): void {
+    if (!runtimeAvailable()) return;
+    window.setInterval(() => {
+      void this.pollGlobalPointerDrag();
+    }, GLOBAL_POINTER_DRAG_POLL_MS);
+  }
+
+  private async pollGlobalPointerDrag(): Promise<void> {
+    if (this.globalPointerPollBusy) return;
+    this.globalPointerPollBusy = true;
+    try {
+      const sample = await getGlobalPointerState();
+      const update = updateGlobalPointerDrag(
+        this.globalPointerDragState,
+        sample,
+        GLOBAL_POINTER_DRAG_THRESHOLD_PX,
+        this.petPointerInteractionPending || this.drag !== null,
+      );
+      this.globalPointerDragState = update.state;
+      if (update.transition === "started") {
+        this.globalPointerDragActive = true;
+        this.syncExternalDragAttention();
+      } else if (update.transition === "ended") {
+        this.globalPointerDragActive = false;
+        this.syncExternalDragAttention();
+      }
+    } catch {
+      this.globalPointerDragState = resetGlobalPointerDrag(
+        this.globalPointerDragState,
+      ).state;
+      if (this.globalPointerDragActive) {
+        this.globalPointerDragActive = false;
+        this.syncExternalDragAttention();
+      }
+    } finally {
+      this.globalPointerPollBusy = false;
+    }
+  }
+
+  private syncExternalDragAttention(): void {
+    const active = shouldTrackExternalDragAttention({
+      globalPointerDragActive: this.globalPointerDragActive,
+      windowDropHoverActive: this.windowDropHoverActive,
+      paused: this.paused,
+      attentionEnabled: this.settings.attentionEnabled,
+    });
+    if (active === this.fileDragActive) return;
+    if (active) {
+      this.startFileAttention();
+    } else {
+      this.stopFileAttention();
+    }
   }
 
   /** Starts continuous file-drag tracking independently of the random look window. */
@@ -549,7 +661,7 @@ class PetController {
     this.fileDragActive = true;
     this.fileAttentionRevision += 1;
     this.stopRoaming();
-    void this.setCursorPassthrough(false);
+    void this.setCursorPassthrough(false).catch(() => undefined);
     void this.updateFileAttention(this.fileAttentionRevision);
   }
 
@@ -585,10 +697,12 @@ class PetController {
 
   private async updateFileAttention(revision: number): Promise<void> {
     if (this.paused || !this.settings.attentionEnabled) return;
-    const [cursor, geometry] = await Promise.all([
-      getCursorPosition(),
-      getWindowGeometry("pet"),
-    ]);
+    const snapshot = await this.readPointerGeometry();
+    if (snapshot === null) {
+      this.scheduleFileAttentionUpdate(revision);
+      return;
+    }
+    const { cursor, geometry } = snapshot;
     if (
       revision !== this.fileAttentionRevision ||
       !this.fileDragActive ||
@@ -600,7 +714,10 @@ class PetController {
     const direction = attentionDirectionFromGlobalPoint(
       cursor,
       geometry,
-      8 * geometry.scaleFactor,
+      {
+        anchorRatio: this.attentionAnchorRatio(),
+        deadZonePx: 8 * geometry.scaleFactor,
+      },
     );
     if (direction === null) {
       this.stateMachine.clearIntent("attention");
@@ -649,10 +766,9 @@ class PetController {
 
   private async updateHitTest(): Promise<void> {
     if (this.drag !== null || this.fileDragActive) return;
-    const [cursor, geometry] = await Promise.all([
-      getCursorPosition(),
-      getWindowGeometry("pet"),
-    ]);
+    const snapshot = await this.readPointerGeometry();
+    if (snapshot === null) return;
+    const { cursor, geometry } = snapshot;
     const overOpaquePixel = hitTestAlphaMask(
       this.currentMask,
       { x: cursor.x - geometry.x, y: cursor.y - geometry.y },
@@ -660,7 +776,22 @@ class PetController {
     );
     const ignore = !overOpaquePixel;
     if (ignore !== this.lastIgnoreCursor) {
-      await this.setCursorPassthrough(ignore);
+      await this.setCursorPassthrough(ignore).catch(() => undefined);
+    }
+  }
+
+  private async readPointerGeometry(): Promise<{
+    cursor: GlobalPointerState;
+    geometry: WindowGeometry;
+  } | null> {
+    try {
+      const [cursor, geometry] = await Promise.all([
+        getGlobalPointerState(),
+        getWindowGeometry("pet"),
+      ]);
+      return { cursor, geometry };
+    } catch {
+      return null;
     }
   }
 

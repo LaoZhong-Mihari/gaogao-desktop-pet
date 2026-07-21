@@ -16,6 +16,10 @@
     "row": 0,
     "column": 0
   },
+  "attentionAnchor": {
+    "x": 52,
+    "y": 160
+  },
   "animations": {
     "idle": {
       "row": 0,
