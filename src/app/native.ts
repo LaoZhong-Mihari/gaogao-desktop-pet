@@ -16,14 +16,19 @@ export interface Rect extends Point {
   height: number;
 }
 
-export interface MonitorWorkArea extends Rect {
+export interface WindowWorkArea extends Rect {
   name?: string | null;
+}
+
+export interface MonitorWorkArea extends Rect {
+  id: string;
+  scaleFactor: number;
 }
 
 export interface WindowGeometry extends Rect {
   scaleFactor: number;
   monitorName?: string | null;
-  workArea?: MonitorWorkArea | null;
+  workArea?: WindowWorkArea | null;
 }
 
 export interface PetDragUpdate {
@@ -99,6 +104,22 @@ export async function getWindowGeometry(label: WindowLabel): Promise<WindowGeome
     };
   }
   return invoke<WindowGeometry>("get_window_geometry", { label });
+}
+
+export async function getMonitorWorkAreas(): Promise<readonly MonitorWorkArea[]> {
+  if (!isTauriRuntime()) {
+    return [
+      {
+        id: "browser",
+        x: 0,
+        y: 0,
+        width: window.screen.availWidth,
+        height: window.screen.availHeight,
+        scaleFactor: window.devicePixelRatio || 1,
+      },
+    ];
+  }
+  return invoke<readonly MonitorWorkArea[]>("get_monitor_work_areas");
 }
 
 export async function moveWindow(label: WindowLabel, x: number, y: number): Promise<void> {

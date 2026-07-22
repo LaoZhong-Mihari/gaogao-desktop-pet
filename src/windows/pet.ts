@@ -17,6 +17,7 @@ import {
   nextOccasionalAttentionDelayMs,
   pickAmbientAnimation,
   resetGlobalPointerDrag,
+  restoreVisiblePosition,
   stepHorizontalRoam,
   shouldTrackExternalDragAttention,
   updateGlobalPointerDrag,
@@ -43,6 +44,7 @@ import {
   beginPetDrag,
   endPetDrag,
   getGlobalPointerState,
+  getMonitorWorkAreas,
   getWindowGeometry,
   moveWindow,
   resizeWindow,
@@ -895,14 +897,26 @@ class PetController {
   }
 
   private async restorePosition(): Promise<void> {
-    if (this.settings.windowPosition !== null) {
-      await moveWindow(
-        "pet",
-        this.settings.windowPosition.x,
-        this.settings.windowPosition.y,
-      ).catch(() => undefined);
+    const saved = this.settings.windowPosition;
+    if (saved !== null) {
+      const restored = await Promise.all([
+        getWindowGeometry("pet"),
+        getMonitorWorkAreas(),
+      ])
+        .then(([geometry, workAreas]) =>
+          restoreVisiblePosition(
+            saved,
+            { width: geometry.width, height: geometry.height },
+            workAreas,
+            saved.monitorId,
+            WINDOW_MARGIN_LOGICAL_PX * geometry.scaleFactor,
+          ),
+        )
+        .catch(() => null);
+      const position = restored?.position ?? saved;
+      await moveWindow("pet", position.x, position.y).catch(() => undefined);
     }
-    await this.ensureVisibleAtBottom(this.settings.windowPosition === null);
+    await this.ensureVisibleAtBottom(saved === null);
   }
 
   private async ensureVisibleAtBottom(forceBottom: boolean): Promise<void> {

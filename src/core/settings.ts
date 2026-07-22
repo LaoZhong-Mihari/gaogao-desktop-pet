@@ -72,15 +72,20 @@ export function normalizeWindowPosition(value: unknown): SavedWindowPosition | n
 
 export function normalizeSettings(value: unknown): PetSettings {
   const source = isRecord(value) ? value : {};
+  const legacyFollowCursor = normalizeBoolean(
+    source.followCursor,
+    DEFAULT_SETTINGS.attentionEnabled,
+  );
   const legacyAttentionEnabled = normalizeBoolean(
     source.lookEnabled,
-    DEFAULT_SETTINGS.attentionEnabled,
+    legacyFollowCursor,
   );
   return {
     scale: normalizeScale(source.scale),
     growthBonus: normalizeGrowthBonus(source.growthBonus),
     alwaysOnTop: normalizeBoolean(source.alwaysOnTop, DEFAULT_SETTINGS.alwaysOnTop),
-    // Preserve the beta.4 preference while retiring its generated direction art.
+    // Preserve beta.2's followCursor and beta.4's lookEnabled preferences while
+    // migrating to event-driven attention. Newer keys take precedence.
     attentionEnabled: normalizeBoolean(
       source.attentionEnabled,
       legacyAttentionEnabled,

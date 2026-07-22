@@ -1,4 +1,4 @@
-name: Release beta
+name: Release
 
 on:
   push:
@@ -69,36 +69,45 @@ jobs:
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-features
 
-  create-prerelease:
-    name: Create prerelease
+  create-release:
+    name: Create release
     needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Create GitHub prerelease if needed
+      - name: Create GitHub release if needed
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
+
+          expected_prerelease=false
+          release_flags=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            expected_prerelease=true
+            release_flags+=(--prerelease)
+          fi
+
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             is_prerelease="$(gh release view "${GITHUB_REF_NAME}" --json isPrerelease --jq '.isPrerelease')"
-            if [[ "${is_prerelease}" != "true" ]]; then
-              echo "Release ${GITHUB_REF_NAME} exists but is not a prerelease." >&2
+            if [[ "${is_prerelease}" != "${expected_prerelease}" ]]; then
+              echo "Release ${GITHUB_REF_NAME} prerelease state is ${is_prerelease}; expected ${expected_prerelease}." >&2
               exit 1
             fi
-            echo "Prerelease ${GITHUB_REF_NAME} already exists; reusing it."
+            echo "Release ${GITHUB_REF_NAME} already exists; reusing it."
           else
             gh release create "${GITHUB_REF_NAME}" \
               --verify-tag \
-              --prerelease \
+              "${release_flags[@]}" \
               --title "糕糕桌宠 ${GITHUB_REF_NAME}" \
               --notes-file .github/release-notes.md
           fi
 
   build:
     name: Build ${{ matrix.name }}
-    needs: create-prerelease
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -147,7 +156,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseDraft: false
-          prerelease: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           uploadUpdaterJson: false
           retryAttempts: 1
           releaseAssetNamePattern: Gaogao_[version]_[arch][setup][ext]

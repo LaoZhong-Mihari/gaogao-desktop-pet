@@ -29,9 +29,13 @@ describe("settings normalization", () => {
     });
   });
 
-  it("migrates the beta.4 look preference to event-driven attention", () => {
-    expect(normalizeSettings({ followCursor: false }).attentionEnabled).toBe(true);
+  it("migrates legacy cursor and look preferences to event-driven attention", () => {
+    expect(normalizeSettings({ followCursor: false }).attentionEnabled).toBe(false);
+    expect(normalizeSettings({ followCursor: true }).attentionEnabled).toBe(true);
     expect(normalizeSettings({ lookEnabled: false }).attentionEnabled).toBe(false);
+    expect(
+      normalizeSettings({ followCursor: false, lookEnabled: true }).attentionEnabled,
+    ).toBe(true);
     expect(
       normalizeSettings({ lookEnabled: false, attentionEnabled: true }).attentionEnabled,
     ).toBe(true);

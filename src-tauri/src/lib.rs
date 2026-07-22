@@ -188,6 +188,17 @@ struct PhysicalRectDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MonitorWorkAreaDto {
+    id: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WindowGeometry {
     label: String,
     /// Every position and size in this DTO uses physical pixels.
@@ -761,6 +772,33 @@ fn get_window_geometry(
     geometry_for(&target)
 }
 
+#[tauri::command]
+fn get_monitor_work_areas(window: WebviewWindow) -> Result<Vec<MonitorWorkAreaDto>, String> {
+    let work_areas = window
+        .available_monitors()
+        .map_err(command_error)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let work_area = monitor.work_area();
+            MonitorWorkAreaDto {
+                id: monitor.name().cloned().unwrap_or_else(|| {
+                    format!(
+                        "monitor-{index}-{}-{}",
+                        work_area.position.x, work_area.position.y
+                    )
+                }),
+                x: work_area.position.x,
+                y: work_area.position.y,
+                width: work_area.size.width,
+                height: work_area.size.height,
+                scale_factor: monitor.scale_factor(),
+            }
+        })
+        .collect();
+    Ok(work_areas)
+}
+
 /// Moves an application window using desktop-relative physical pixels.
 #[tauri::command]
 fn move_window(
@@ -968,6 +1006,7 @@ pub fn run() {
             update_pet_drag,
             end_pet_drag,
             get_window_geometry,
+            get_monitor_work_areas,
             move_window,
             resize_window,
             ensure_food_token,

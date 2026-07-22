@@ -29,7 +29,7 @@ function settingsMarkup(settings: PetSettings): string {
           <label class="select-row"><span>基础大小</span><select name="scale">${scaleOptions}</select></label>
           <div class="growth-row"><span>吃猫条长大</span><strong>+${growthPercent}%</strong></div>
           ${toggle("alwaysOnTop", "始终置顶", settings.alwaysOnTop)}
-          ${toggle("attentionEnabled", "偶尔注意鼠标和文件", settings.attentionEnabled)}
+          ${toggle("attentionEnabled", "偶尔注意鼠标和拖动", settings.attentionEnabled)}
           ${toggle("autoRoam", "空闲后从当前位置左右漫步", settings.autoRoam)}
           ${toggle("launchAtLogin", "登录时自动启动", settings.launchAtLogin)}
         </fieldset>
