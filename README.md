@@ -122,11 +122,11 @@ npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
 推送 `v*` 标签会触发 GitHub Actions，在 macOS 与 Windows runner 上构建原生安装包，并创建 prerelease：
 
 ```bash
-git tag v0.1.0-beta.9
-git push origin v0.1.0-beta.9
+git tag v0.1.0-beta.10
+git push origin v0.1.0-beta.10
 ```
 
-发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.9` 对应标签 `v0.1.0-beta.9`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
+发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `0.1.0-beta.10` 对应标签 `v0.1.0-beta.10`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
 
 ## 许可
 
