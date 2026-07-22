@@ -330,14 +330,15 @@ fn cursor_position_for_window(
     app: &AppHandle,
     window: &WebviewWindow,
 ) -> Result<tauri::PhysicalPosition<f64>, String> {
-    let mut position = app.cursor_position().map_err(command_error)?;
+    let position = app.cursor_position().map_err(command_error)?;
 
     // Tao reports the macOS global cursor using the primary monitor's scale,
     // while a window position uses the scale of the monitor containing that
     // window. Convert the cursor into that same coordinate basis so mixed-DPI
     // and negative-coordinate displays still produce the correct gaze vector.
     #[cfg(target_os = "macos")]
-    {
+    let position = {
+        let mut position = position;
         let primary_scale = app
             .primary_monitor()
             .map_err(command_error)?
@@ -349,7 +350,11 @@ fn cursor_position_for_window(
             position.x *= ratio;
             position.y *= ratio;
         }
-    }
+        position
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
 
     Ok(position)
 }
