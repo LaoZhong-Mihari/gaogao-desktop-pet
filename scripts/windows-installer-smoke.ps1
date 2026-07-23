@@ -194,8 +194,8 @@ try {
   if ($app.HasExited) {
     throw "The upgraded application exited with code $($app.ExitCode)."
   }
-  $runValue = Get-ItemPropertyValue -Path $runKey -Name "糕糕桌宠" -ErrorAction SilentlyContinue
-  if ($null -ne $runValue) {
+  $runRegistration = Get-Item -Path $runKey
+  if ($runRegistration.GetValueNames() -contains "糕糕桌宠") {
     throw "Launch-at-login should remain disabled after the upgraded app starts."
   }
 
