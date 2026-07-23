@@ -1,6 +1,6 @@
 [package]
 name = "gaogao-desktop-pet"
-version = "1.0.0"
+version = "1.0.1"
 description = "Independent cross-platform desktop pet for Gaogao"
 authors = ["LaoZhong-Mihari"]
 edition = "2021"

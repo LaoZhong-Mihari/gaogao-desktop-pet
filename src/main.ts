@@ -19,6 +19,7 @@ function currentWindow(): AppWindow {
 async function boot(): Promise<void> {
   const label = currentWindow();
   document.documentElement.dataset.window = label;
+  document.documentElement.dataset.bootState = "booting";
 
   if (label === "settings") {
     const { initSettingsWindow } = await import("./windows/settings");
@@ -27,9 +28,11 @@ async function boot(): Promise<void> {
     const { initPetWindow } = await import("./windows/pet");
     await initPetWindow();
   }
+  document.documentElement.dataset.bootState = "ready";
 }
 
 void boot().catch((error: unknown) => {
+  document.documentElement.dataset.bootState = "fatal";
   const message = error instanceof Error ? error.message : String(error);
   document.querySelector<HTMLElement>("#app")!.innerHTML =
     `<section class="fatal"><strong>糕糕没能醒来</strong><small>${message}</small></section>`;

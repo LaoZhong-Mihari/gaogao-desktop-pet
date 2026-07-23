@@ -514,19 +514,43 @@ fn set_always_on_top_impl(
     Ok(enabled)
 }
 
+fn reconcile_launch_at_login<E, Check, Enable, Disable>(
+    desired: bool,
+    mut check: Check,
+    enable: Enable,
+    disable: Disable,
+) -> Result<bool, E>
+where
+    Check: FnMut() -> Result<bool, E>,
+    Enable: FnOnce() -> Result<(), E>,
+    Disable: FnOnce() -> Result<(), E>,
+{
+    let current = check()?;
+    if current == desired {
+        return Ok(current);
+    }
+
+    if desired {
+        enable()?;
+    } else {
+        disable()?;
+    }
+    check()
+}
+
 fn set_launch_at_login_impl(
     app: &AppHandle,
     state: &NativeState,
     enabled: bool,
 ) -> Result<bool, String> {
     let manager = app.autolaunch();
-    if enabled {
-        manager.enable().map_err(command_error)?;
-    } else {
-        manager.disable().map_err(command_error)?;
-    }
-
-    let actual = manager.is_enabled().map_err(command_error)?;
+    let actual = reconcile_launch_at_login(
+        enabled,
+        || manager.is_enabled(),
+        || manager.enable(),
+        || manager.disable(),
+    )
+    .map_err(command_error)?;
     state.launch_at_login.store(actual, Ordering::Relaxed);
     let _ = state.tray_launch_at_login.set_checked(actual);
     let _ = app.emit(EVENT_LAUNCH_AT_LOGIN_CHANGED, actual);
@@ -1201,5 +1225,42 @@ mod tests {
         assert!(started.moved);
         let continued = session.advance(DragPoint { x: 104.0, y: 200.0 }, 6.0);
         assert!(continued.moved);
+    }
+
+    #[test]
+    fn disabling_absent_launch_at_login_registration_is_idempotent() {
+        use std::cell::Cell;
+
+        let disable_calls = Cell::new(0);
+        let actual = reconcile_launch_at_login(
+            false,
+            || Ok::<_, &'static str>(false),
+            || panic!("enabling was not requested"),
+            || {
+                disable_calls.set(disable_calls.get() + 1);
+                Ok(())
+            },
+        )
+        .expect("an absent registration is already disabled");
+
+        assert!(!actual);
+        assert_eq!(disable_calls.get(), 0);
+    }
+
+    #[test]
+    fn launch_at_login_reconciliation_preserves_real_errors() {
+        use std::cell::Cell;
+
+        let registered = Cell::new(true);
+        let error = reconcile_launch_at_login(
+            false,
+            || Ok(registered.get()),
+            || Ok(()),
+            || Err::<(), _>("registry access denied"),
+        )
+        .expect_err("a real disable error must be returned");
+
+        assert_eq!(error, "registry access denied");
+        assert!(registered.get());
     }
 }

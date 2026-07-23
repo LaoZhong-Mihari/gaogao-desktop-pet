@@ -4,7 +4,7 @@
 
 糕糕是一只可安装在 macOS 和 Windows 上的独立桌宠。应用使用 Tauri 2 + TypeScript 构建，所有动画和设置都在本机运行：**无需 Codex、无需 Python、无需登录，也不会连接网络服务**。
 
-> v1.0.0 仍是未签名版本。macOS Gatekeeper 或 Windows SmartScreen 可能在首次打开时显示安全提醒，请确认安装包来自本仓库的 [Releases](https://github.com/LaoZhong-Mihari/gaogao-desktop-pet/releases) 页面，并可用同一版本附带的 `SHA256SUMS.txt` 核对文件。
+> v1.0.1 仍是未签名版本。macOS Gatekeeper 或 Windows SmartScreen 可能在首次打开时显示安全提醒，请确认安装包来自本仓库的 [Releases](https://github.com/LaoZhong-Mihari/gaogao-desktop-pet/releases) 页面，并可用同一版本附带的 `SHA256SUMS.txt` 核对文件。
 
 ## 下载与安装
 
@@ -20,8 +20,8 @@ Release 同时提供 `.app.tar.gz`，适合不使用 DMG 的用户。解压后�
 
 ### Windows 10 / 11（x64）
 
-1. 在 [Releases](https://github.com/LaoZhong-Mihari/gaogao-desktop-pet/releases) 下载 NSIS 安装包 `.exe`。
-2. 运行安装包并按提示完成安装。
+1. 在 [Releases](https://github.com/LaoZhong-Mihari/gaogao-desktop-pet/releases) 下载 NSIS 安装包 `.exe`。v1.0.1 内置离线 WebView2 安装程序，因此文件会比 v1.0.0 明显更大。
+2. 运行安装包并按提示完成安装。已安装 v1.0.0 时可直接运行新安装包并采用默认升级选项，无需手动卸载；不要勾选“删除应用数据”，即可保留用户设置与成长记录。
 3. 因当前版本尚未进行 Authenticode 签名，如 SmartScreen 出现提醒，请核对下载来源与 SHA-256 后，选择“更多信息 → 仍要运行”。
 
 不要从第三方网盘或转载页面下载安装包。代码签名与公证会在后续发布中加入。
@@ -122,11 +122,11 @@ npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
 推送 `v*` 标签会触发 GitHub Actions，在 macOS 与 Windows runner 上构建原生安装包。带预发布后缀的标签会创建 prerelease，稳定版本标签会创建正式 Release：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
-发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `1.0.0` 对应标签 `v1.0.0`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
+发布标签必须与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 的版本完全一致；当前 `1.0.1` 对应标签 `v1.0.1`。工作流会将 Universal DMG、压缩 APP、Windows x64 NSIS EXE 和 `SHA256SUMS.txt` 上传到同一 Release。
 
 ## 许可
 
