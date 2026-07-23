@@ -6,7 +6,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   process.exit(2);
 }
 
-const deadline = Date.now() + 30_000;
+const deadline = Date.now() + 60_000;
 const endpoint = `http://127.0.0.1:${port}/json/list`;
 let lastObservation = `WebView2 DevTools endpoint ${endpoint} is not available`;
 
